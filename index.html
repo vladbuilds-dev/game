@@ -64,14 +64,86 @@
     display:flex; justify-content:space-between; align-items:center; margin-top:6px;
   }
   .card:hover .play span:last-child{animation:blink .6s steps(2) infinite}
+
+  /* ---------- ТОП ИГР ---------- */
+  .top{
+    position:relative; margin-bottom:56px; padding:36px 28px 0;
+    background:
+      linear-gradient(180deg, rgba(255,217,61,.07), transparent 60%),
+      repeating-linear-gradient(0deg, rgba(255,255,255,.025) 0 2px, transparent 2px 4px),
+      var(--panel);
+    border:2px solid var(--line); border-radius:6px; overflow:hidden;
+  }
+  .top-head{display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:16px; margin-bottom:8px}
+  .top h2{font-family:"Press Start 2P", monospace; font-weight:400; font-size:clamp(18px,3vw,26px); color:var(--yellow); text-shadow:3px 3px 0 #7a3b00}
+  .top-note{font-size:12px; color:var(--muted); margin-top:10px}
+  .tabs{display:flex; gap:6px}
+  .tab, .rand{
+    font-family:"Press Start 2P", monospace; font-size:9px; line-height:1; cursor:pointer;
+    color:var(--muted); background:#0a0b12; border:2px solid var(--line); padding:9px 10px; border-radius:3px;
+  }
+  .tab[aria-pressed="true"]{color:#07070d; background:var(--yellow); border-color:var(--yellow)}
+  .tab:focus-visible, .rand:focus-visible{outline:2px solid var(--mint); outline-offset:2px}
+
+  .podium{display:grid; grid-template-columns:repeat(3,1fr); align-items:end; gap:14px; max-width:820px; margin:28px auto 0}
+  .spot{display:flex; flex-direction:column; align-items:center; text-decoration:none; color:inherit; min-width:0}
+  .spot .pic{
+    width:100%; aspect-ratio:16/10; background:#000 center/cover no-repeat; image-rendering:pixelated;
+    border:3px solid var(--c); border-radius:4px; box-shadow:4px 4px 0 rgba(0,0,0,.5);
+    transition:transform .15s steps(3);
+  }
+  .spot:hover .pic, .spot:focus-visible .pic{transform:translateY(-6px)}
+  .spot:focus-visible{outline:none}
+  .spot .nm{font-family:"Press Start 2P", monospace; font-size:10px; line-height:1.5; color:var(--c); margin:12px 0 4px; text-align:center}
+  .spot .st{font-size:11px; color:var(--muted); margin-bottom:10px; text-align:center; min-height:1.4em}
+  .block{
+    width:100%; display:flex; justify-content:center; padding-top:14px;
+    font-family:"Press Start 2P", monospace; color:#07070d;
+    background:linear-gradient(180deg, var(--p) 0 12px, var(--pd) 12px);
+    box-shadow:inset -6px 0 0 rgba(0,0,0,.18);
+  }
+  .p1 .block{--p:#ffe98a; --pd:#ffd93d; height:150px; font-size:44px}
+  .p2 .block{--p:#e6e9f2; --pd:#b9bfd0; height:104px; font-size:34px}
+  .p3 .block{--p:#f2b27a; --pd:#d0864a; height:72px;  font-size:28px}
+  .p1{order:2} .p2{order:1} .p3{order:3}
+  .crown{width:48px; height:32px; margin-bottom:8px; image-rendering:pixelated; animation:bob 1.2s steps(4) infinite}
+  @keyframes bob{50%{transform:translateY(-6px)}}
+
+  .rest{list-style:none; max-width:820px; margin:0 auto; padding:18px 0 26px; border-top:4px solid #2b2d40; display:grid; gap:8px}
+  .rest a{
+    display:grid; grid-template-columns:44px 64px 1fr auto; align-items:center; gap:14px;
+    text-decoration:none; color:inherit; padding:8px 12px; border:2px solid transparent; border-radius:4px; background:rgba(0,0,0,.25);
+  }
+  .rest a:hover, .rest a:focus-visible{border-color:var(--c); outline:none}
+  .rest .n{font-family:"Press Start 2P", monospace; font-size:14px; color:var(--muted)}
+  .rest .th{aspect-ratio:16/10; background:#000 center/cover; border-radius:2px; image-rendering:pixelated}
+  .rest .t{font-family:"Press Start 2P", monospace; font-size:10px; color:var(--c)}
+  .rest .v{font-size:12px; color:var(--muted); text-align:right}
+
+  .spark{position:absolute; width:6px; height:6px; pointer-events:none; animation:fall linear forwards}
+  @keyframes fall{to{transform:translateY(var(--dy)) rotate(360deg); opacity:0}}
+
+  .rec{
+    position:absolute; right:10px; bottom:10px; font-size:11px; font-weight:700;
+    background:rgba(0,0,0,.75); color:var(--yellow); padding:5px 8px; border-radius:3px;
+  }
   footer{margin-top:48px; color:var(--muted); font-size:12px; text-align:center}
 
   @media (max-width:520px){
     .wrap{padding:36px 16px 48px}
     .grid{grid-template-columns:1fr}
+
+    .top{padding:26px 14px 0}
+    .podium{gap:8px}
+    .spot .nm{font-size:8px}
+    .p1 .block{height:110px; font-size:30px} .p2 .block{height:78px; font-size:24px} .p3 .block{height:54px; font-size:20px}
+    .crown{width:36px; height:24px}
+    .rest a{grid-template-columns:30px 52px 1fr; gap:10px}
+    .rest .v{grid-column:3; text-align:left}
   }
   @media (prefers-reduced-motion:reduce){
-    .coin, .card:hover .play span:last-child{animation:none}
+    .coin, .card:hover .play span:last-child, .crown{animation:none}
+    .spark{display:none}
     .card{transition:none}
   }
 </style>
@@ -86,9 +158,25 @@
     <div class="coin">ВЫБЕРИ ИГРУ ▸</div>
   </header>
 
+  <section class="top" aria-labelledby="top-title">
+    <div class="top-head">
+      <div>
+        <h2 id="top-title">ТОП ИГР</h2>
+        <p class="top-note" id="top-note"></p>
+      </div>
+      <div class="tabs" role="group" aria-label="Как считать топ">
+        <button class="tab" data-mode="hits" aria-pressed="true">ХИТЫ</button>
+        <button class="tab" data-mode="mine" aria-pressed="false">МОЙ ТОП</button>
+        <button class="rand" id="rand">? СЛУЧАЙНАЯ</button>
+      </div>
+    </div>
+    <div class="podium" id="podium"></div>
+    <ol class="rest" id="rest"></ol>
+  </section>
+
   <main class="grid">
-    <a class="card" href="games/pixel-surf.html" style="--c:#ff5b6e">
-      <div class="shot" style="background-image:url(img/pixel-surf.png)"><span class="tag">РАННЕР</span></div>
+    <a class="card" data-id="pixel-surf" href="games/pixel-surf.html" style="--c:#ff5b6e">
+      <div class="shot" style="background-image:url(img/pixel-surf.png)"><span class="rec" hidden></span><span class="tag">РАННЕР</span></div>
       <div class="body">
         <div class="name">PIXEL SURF</div>
         <p class="desc">Охранник гонится за шкетом по рельсам. Уворачивайся от поездов и барьеров, собирай монеты.</p>
@@ -97,8 +185,8 @@
       </div>
     </a>
 
-    <a class="card" href="games/pole-position.html" style="--c:#40a0ff">
-      <div class="shot" style="background-image:url(img/pole-position.png)"><span class="tag">ГОНКИ</span></div>
+    <a class="card" data-id="pole-position" href="games/pole-position.html" style="--c:#40a0ff">
+      <div class="shot" style="background-image:url(img/pole-position.png)"><span class="rec" hidden></span><span class="tag">ГОНКИ</span></div>
       <div class="body">
         <div class="name">POLE POSITION</div>
         <p class="desc">Аркадные гонки в стиле 80-х: три круга, соперники, холмы и повороты. Побей лучший круг.</p>
@@ -107,8 +195,8 @@
       </div>
     </a>
 
-    <a class="card" href="games/block-blast.html" style="--c:#4d9fff">
-      <div class="shot" style="background-image:url(img/block-blast.png)"><span class="tag">ГОЛОВОЛОМКА</span></div>
+    <a class="card" data-id="block-blast" href="games/block-blast.html" style="--c:#4d9fff">
+      <div class="shot" style="background-image:url(img/block-blast.png)"><span class="rec" hidden></span><span class="tag">ГОЛОВОЛОМКА</span></div>
       <div class="body">
         <div class="name">БЛОК БЛАСТ</div>
         <p class="desc">Поле 8×8. Ставь фигуры, собирай полные ряды и столбцы, копи комбо.</p>
@@ -117,8 +205,8 @@
       </div>
     </a>
 
-    <a class="card" href="games/kosmo-raketa.html" style="--c:#c7f04a">
-      <div class="shot" style="background-image:url(img/kosmo-raketa.png)"><span class="tag">КОСМОС</span></div>
+    <a class="card" data-id="kosmo-raketa" href="games/kosmo-raketa.html" style="--c:#c7f04a">
+      <div class="shot" style="background-image:url(img/kosmo-raketa.png)"><span class="rec" hidden></span><span class="tag">КОСМОС</span></div>
       <div class="body">
         <div class="name">КОСМО-РАКЕТА</div>
         <p class="desc">Ракета летит по инерции сквозь астероиды. Пролетай вплотную, чтобы получить бонус и заряд буста.</p>
@@ -127,8 +215,8 @@
       </div>
     </a>
 
-    <a class="card" href="games/blackjack.html" style="--c:#3cdc8c">
-      <div class="shot" style="background-image:url(img/blackjack.png)"><span class="tag">КАРТЫ</span></div>
+    <a class="card" data-id="blackjack" href="games/blackjack.html" style="--c:#3cdc8c">
+      <div class="shot" style="background-image:url(img/blackjack.png)"><span class="rec" hidden></span><span class="tag">КАРТЫ</span></div>
       <div class="body">
         <div class="name">БЛЕКДЖЕК 21</div>
         <p class="desc">Пиксельный стол против дилера. Фишки виртуальные, деньги не нужны.</p>
@@ -137,8 +225,8 @@
       </div>
     </a>
 
-    <a class="card" href="games/pixel-coffee.html" style="--c:#ffa048">
-      <div class="shot" style="background-image:url(img/pixel-coffee.png)"><span class="tag">ТАЙМ-МЕНЕДЖМЕНТ</span></div>
+    <a class="card" data-id="pixel-coffee" href="games/pixel-coffee.html" style="--c:#ffa048">
+      <div class="shot" style="background-image:url(img/pixel-coffee.png)"><span class="rec" hidden></span><span class="tag">ТАЙМ-МЕНЕДЖМЕНТ</span></div>
       <div class="body">
         <div class="name">КОФЕЙНЯ</div>
         <p class="desc">Смена бариста. Собирай напитки по рецепту и не зли босса ошибками.</p>
@@ -148,7 +236,139 @@
     </a>
   </main>
 
-  <footer>Рекорды сохраняются в браузере</footer>
+  <footer>Рекорды и твой топ хранятся в этом браузере</footer>
 </div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="crown" viewBox="0 0 12 8" shape-rendering="crispEdges">
+    <path fill="#ffd93d" d="M0 1h1v1h1v1h1V2h1V1h1V0h2v1h1v1h1v1h1V2h1V1h1v7H0z"/>
+    <path fill="#b8860b" d="M0 6h12v2H0z"/>
+    <path fill="#ff5b6e" d="M2 6h1v1H2zM9 6h1v1H9z"/><path fill="#4d9fff" d="M5 6h2v1H5z"/>
+  </symbol>
+</svg>
+<script>
+(function(){
+  'use strict';
+  var GAMES = [
+    { id:'pixel-surf',    name:'PIXEL SURF',    c:'#ff5b6e', key:'pixelsurf_best',     fmt:function(v){ return v>0 ? v+' очк.' : null; } },
+    { id:'pole-position', name:'POLE POSITION', c:'#40a0ff', key:'pole_pos_bestlap',   fmt:function(v){ return v>0 ? 'круг '+Math.floor(v/60)+':'+String(Math.floor(v%60)).padStart(2,'0') : null; } },
+    { id:'block-blast',   name:'БЛОК БЛАСТ',    c:'#4d9fff', key:'blockblast_best',    fmt:function(v){ return v>0 ? v+' очк.' : null; } },
+    { id:'kosmo-raketa',  name:'КОСМО-РАКЕТА',  c:'#c7f04a', key:'kosmo_rocket_best',  fmt:function(v){ return v>0 ? v+' очк.' : null; } },
+    { id:'blackjack',     name:'БЛЕКДЖЕК 21',   c:'#3cdc8c', key:null,                 fmt:function(){ return null; } },
+    { id:'pixel-coffee',  name:'КОФЕЙНЯ',       c:'#ffa048', key:'pixcoffee_detailed', fmt:function(v){ return v!==0 ? '$'+v.toLocaleString('ru-RU') : null; } }
+  ];
+  // редакторский рейтинг «хиты»
+  var HITS = ['pixel-surf','block-blast','kosmo-raketa','pole-position','blackjack','pixel-coffee'];
+  var HIT_LABEL = { 'pixel-surf':'самый залипательный', 'block-blast':'«ещё одну партию»', 'kosmo-raketa':'для сильных нервов',
+                    'pole-position':'олдскул 80-х', 'blackjack':'без риска', 'pixel-coffee':'босс следит' };
+
+  function get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+  function set(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+  function plays(){ try { return JSON.parse(get('arcade_plays')||'{}') || {}; } catch(e){ return {}; } }
+  function record(g){ if(!g.key) return null; var v=parseFloat(get(g.key)); return isNaN(v) ? null : g.fmt(v); }
+  function byId(id){ for(var i=0;i<GAMES.length;i++) if(GAMES[i].id===id) return GAMES[i]; }
+  function word(n){ var a=n%10, b=n%100; return a===1&&b!==11 ? 'запуск' : (a>=2&&a<=4&&(b<12||b>14) ? 'запуска' : 'запусков'); }
+
+  var mode = get('arcade_top_mode') === 'mine' ? 'mine' : 'hits';
+  var podium = document.getElementById('podium'), rest = document.getElementById('rest'), note = document.getElementById('top-note');
+
+  function ranking(){
+    if(mode==='hits') return HITS.map(byId);
+    var p = plays();
+    return HITS.map(byId).sort(function(a,b){ return (p[b.id]||0)-(p[a.id]||0); });
+  }
+  function stat(g){
+    if(mode==='hits') return HIT_LABEL[g.id];
+    var n = plays()[g.id]||0;
+    return n ? n+' '+word(n) : 'ещё не играл';
+  }
+  function esc(t){ return String(t).replace(/[&<>"]/g,function(ch){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]; }); }
+
+  function render(){
+    var list = ranking(), total = 0, p = plays();
+    for(var k in p) total += p[k];
+    note.textContent = mode==='hits'
+      ? 'Выбор аркады. Переключи на «Мой топ», и места расставят твои запуски.'
+      : (total ? 'Всего запусков: '+total+'. Чем чаще играешь, тем выше игра.' : 'Пока пусто: запусти пару игр, и тут появится твой рейтинг.');
+
+    podium.innerHTML = list.slice(0,3).map(function(g,i){
+      var r = record(g);
+      return '<a class="spot p'+(i+1)+'" href="games/'+g.id+'.html" data-id="'+g.id+'" style="--c:'+g.c+'">'
+        + (i===0 ? '<svg class="crown" aria-hidden="true"><use href="#crown"/></svg>' : '')
+        + '<div class="pic" style="background-image:url(img/'+g.id+'.png)"></div>'
+        + '<div class="nm">'+esc(g.name)+'</div>'
+        + '<div class="st">'+esc(stat(g))+(r ? ' · ★ '+esc(r) : '')+'</div>'
+        + '<div class="block" aria-label="место '+(i+1)+'">'+(i+1)+'</div></a>';
+    }).join('');
+
+    rest.innerHTML = list.slice(3).map(function(g,i){
+      var r = record(g);
+      return '<li><a href="games/'+g.id+'.html" data-id="'+g.id+'" style="--c:'+g.c+'">'
+        + '<span class="n">#'+(i+4)+'</span>'
+        + '<span class="th" style="background-image:url(img/'+g.id+'.png)"></span>'
+        + '<span class="t">'+esc(g.name)+'</span>'
+        + '<span class="v">'+esc(stat(g))+(r ? ' · ★ '+esc(r) : '')+'</span></a></li>';
+    }).join('');
+
+    document.querySelectorAll('.tab').forEach(function(b){ b.setAttribute('aria-pressed', String(b.dataset.mode===mode)); });
+
+    // рекорды на карточках
+    GAMES.forEach(function(g){
+      var el = document.querySelector('.card[data-id="'+g.id+'"] .rec'), r = record(g);
+      if(!el) return;
+      el.hidden = !r; if(r) el.textContent = '★ '+r;
+    });
+    confetti();
+  }
+
+  function confetti(){
+    if(window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var host = document.querySelector('.top'), first = podium.querySelector('.p1');
+    if(!first) return;
+    var hr = host.getBoundingClientRect(), fr = first.getBoundingClientRect();
+    var cols = ['#ffd93d','#ff5b6e','#8ef0c8','#4d9fff','#c7f04a'];
+    for(var i=0;i<26;i++){
+      var s = document.createElement('i');
+      s.className = 'spark';
+      s.style.left = (fr.left-hr.left + Math.random()*fr.width) + 'px';
+      s.style.top = (fr.top-hr.top - 10 - Math.random()*30) + 'px';
+      s.style.background = cols[i%cols.length];
+      s.style.setProperty('--dy', (80+Math.random()*160)+'px');
+      s.style.animationDuration = (0.9+Math.random()*1.1)+'s';
+      s.style.animationDelay = (Math.random()*0.4)+'s';
+      s.addEventListener('animationend', function(){ this.remove(); });
+      host.appendChild(s);
+    }
+  }
+
+  document.querySelectorAll('.tab').forEach(function(b){
+    b.addEventListener('click', function(){ mode = b.dataset.mode; set('arcade_top_mode', mode); render(); });
+  });
+
+  // считаем запуски по любому клику на игру
+  document.addEventListener('click', function(e){
+    var a = e.target.closest('a[data-id]');
+    if(!a) return;
+    var p = plays(); p[a.dataset.id] = (p[a.dataset.id]||0) + 1;
+    set('arcade_plays', JSON.stringify(p));
+  });
+
+  // случайная игра: быстрая «рулетка» по пьедесталу и списку, потом переход
+  document.getElementById('rand').addEventListener('click', function(){
+    var links = Array.prototype.slice.call(document.querySelectorAll('#podium a, #rest a'));
+    var target = Math.floor(Math.random()*links.length), steps = links.length*2 + target, i = 0;
+    (function tick(){
+      links.forEach(function(l){ l.style.outline=''; });
+      var cur = links[i % links.length];
+      cur.style.outline = '3px solid var(--yellow)'; cur.style.outlineOffset = '3px';
+      if(i >= steps){ setTimeout(function(){ cur.click(); }, 350); return; }
+      i++; setTimeout(tick, 50 + i*6);
+    })();
+  });
+
+  // обновить рекорды, когда возвращаешься из игры кнопкой «назад»
+  window.addEventListener('pageshow', function(e){ if(e.persisted) render(); });
+  render();
+})();
+</script>
 </body>
 </html>
