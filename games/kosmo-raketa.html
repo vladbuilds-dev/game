@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>КОСМО-РАКЕТА — уклонение от астероидов</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body{
+    width:100%; height:100%;
+    background:#04030c;
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
+    touch-action:none;
+    font-family: ui-monospace, "Courier New", monospace;
+  }
+  canvas{
+    display:block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    width: min(100vw, 140vh);
+    height: auto;
+    aspect-ratio: 900 / 640;
+    box-shadow: 0 0 90px rgba(90,180,255,.15), 0 0 0 2px #12121f;
+    border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+<canvas id="c" width="900" height="640"></canvas>
+<script>
+"use strict";
+
+/* =========================================================
+   КОСМО-РАКЕТА
+   Физика тяги с инерцией + буст-метр + near-miss бонусы
+   ========================================================= */
+
+const cvs = document.getElementById('c');
+const ctx = cvs.getContext('2d');
+const W = 900, H = 640;
+ctx.imageSmoothingEnabled = false;
+
+/* ---------- UTILS ---------- */
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+function makeSprite(rows, pal) {
+  const h = rows.length, w = rows[0].length;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const col = pal[rows[y][x]];
+      if (col) { g.fillStyle = col; g.fillRect(x, y, 1, 1); }
+    }
+  }
+  return c;
+}
+
+/* ---------- ROCKET SPRITE (pixel) ---------- */
+const RP = {
+  '.': null,
+  r: '#e63946', R: '#8f1a26',
+  w: '#eef3fa', W: '#aab6c8',
+  c: '#7ad3ff', C: '#2f7fc4',
+  g: '#7b8494'
+};
+const ROCKET_ROWS = [
+  ".....rr.....",
+  "....rrrr....",
+  "....wwWW....",
+  "...wwwwWW...",
+  "...wcccCW...",
+  "...wcccCW...",
+  "...wwwwWW...",
+  "..rwwwwWWR..",
+  "..rwwwwWWR..",
+  "..rwwwwWWR..",
+  "..rwwwwWWR..",
+  "..rwwwwWWR..",
+  "..rwwwwWWR..",
+  "..rwwwwWWR..",
+  "..rwwwwWWR..",
+  ".rrwwwwWWRR.",
+  ".rrwwwwWWRR.",
+  "rrrwwwwWWRRR",
+  "rrrwwwwWWRRR",
+  "ggg.wwww.ggg"
+];
+const SPR_ROCKET = makeSprite(ROCKET_ROWS, RP);
+
+/* ---------- ASTEROID PALETTES ---------- */
+const AST_HUES = [
+  { base:'#7a7280', dark:'#443f4c', light:'#a8a0b0', crater:'#2e2a36' },
+  { base:'#8a7a68', dark:'#4e4438', light:'#b8a894', crater:'#332c22' },
+  { base:'#6e7a88', dark:'#3b4450', light:'#9aa8b8', crater:'#242c36' },
+  { base:'#8a6a6a', dark:'#4e3a3a', light:'#b89090', crater:'#332424' },
+  { base:'#6e8a7a', dark:'#3b4e44', light:'#9ab8a4', crater:'#24332c' }
+];
+
+function makeAsteroidSprite(seed, hue) {
+  const S = 40;
+  const c = document.createElement('canvas');
+  c.width = S; c.height = S;
+  const g = c.getContext('2d');
+  const rnd = mulberry32(seed);
+  const cxp = S/2, cyp = S/2, R = S/2 - 2;
+
+  const N = 12 + Math.floor(rnd()*6);
+  const pts = [];
+  for (let i = 0; i < N; i++) {
+    const a = i/N * Math.PI*2;
+    const rr = R * (0.68 + rnd()*0.32);
+    pts.push([cxp + Math.cos(a)*rr, cyp + Math.sin(a)*rr]);
+  }
+
+  // base blob
+  g.fillStyle = hue.base;
+  g.beginPath();
+  g.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < N; i++) g.lineTo(pts[i][0], pts[i][1]);
+  g.closePath();
+  g.fill();
+
+  // shading: dark bottom-right
+  g.globalCompositeOperation = 'source-atop';
+  g.fillStyle = hue.dark;
+  g.beginPath();
+  g.arc(cxp + R*0.55, cyp + R*0.55, R*1.05, 0, Math.PI*2);
+  g.fill();
+  // highlight top-left
+  g.fillStyle = hue.light;
+  g.beginPath();
+  g.arc(cxp - R*0.45, cyp - R*0.5, R*0.62, 0, Math.PI*2);
+  g.fill();
+
+  // craters
+  const nc = 3 + Math.floor(rnd()*4);
+  for (let i = 0; i < nc; i++) {
+    const ca = rnd()*Math.PI*2;
+    const cr = rnd()*(R*0.62);
+    const cx2 = cxp + Math.cos(ca)*cr;
+    const cy2 = cyp + Math.sin(ca)*cr;
+    const crr = R * (0.07 + rnd()*0.14);
+    g.fillStyle = hue.crater;
+    g.beginPath(); g.arc(cx2, cy2, crr, 0, Math.PI*2); g.fill();
+    g.fillStyle = hue.light;
+    g.beginPath(); g.arc(cx2 - crr*0.25, cy2 - crr*0.25, crr*0.5, 0, Math.PI*2); g.fill();
+  }
+  g.globalCompositeOperation = 'source-over';
+  return c;
+}
+
+/* ---------- AUDIO ---------- */
+let actx = null;
+function AC() {
+  if (!actx) {
+    try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){ actx = null; }
+  }
+  return actx;
+}
+function beep(f0, f1, dur, vol, type) {
+  const a = AC(); if (!a) return;
+  try {
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = type || 'square';
+    const t = a.currentTime;
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+    o.connect(g); g.connect(a.destination);
+    o.start(t); o.stop(t + dur + 0.03);
+  } catch(e){}
+}
+const sfx = {
+  near(){ beep(1500, 2600, 0.07, 0.035, 'square'); },
+  boom(){
+    beep(200, 28, 0.7, 0.16, 'sawtooth');
+    setTimeout(function(){ beep(90, 22, 0.9, 0.13, 'sawtooth'); }, 45);
+    setTimeout(function(){ beep(420, 60, 0.3, 0.07, 'square'); }, 15);
+  },
+  launch(){ beep(180, 880, 0.34, 0.06, 'sawtooth'); }
+};
+
+/* ---------- BACKGROUND GRADIENT ---------- */
+const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
+bgGrad.addColorStop(0.00, '#04030e');
+bgGrad.addColorStop(0.45, '#0a0820');
+bgGrad.addColorStop(1.00, '#150a2c');
+
+/* ---------- STATE ---------- */
+let S = null;
+let touchTarget = null;
+const keys = { left:false, right:false, up:false, down:false, boost:false };
+
+let best = 0;
+try { best = parseInt(localStorage.getItem('kosmo_rocket_best') || '0', 10) || 0; } catch(e){ best = 0; }
+
+function reset() {
+  S = {
+    started: false,
+    over: false,
+    hitstop: 0,
+    t: 0,
+    speed: 1,
+    score: 0,
+    nearMisses: 0,
+    combo: 0,
+    comboTimer: 0,
+    shake: 0,
+    flash: 0,
+    boost: 1,
+    boosting: false,
+    spawnAccum: 0,
+    spawnThreshold: 0.95,
+    rocket: { x: W/2, y: H*0.72, vx: 0, vy: 0, angle: 0 },
+    asteroids: [],
+    particles: [],
+    stars: [],
+    nebulas: [],
+    speedLines: []
+  };
+  // stars: 3 parallax layers
+  for (let i = 0; i < 220; i++) {
+    const l = i % 3;
+    S.stars.push({
+      x: Math.random()*W,
+      y: Math.random()*H,
+      l: l,
+      sz: l === 0 ? 1 : (l === 1 ? 2 : 2),
+      a: l === 0 ? 0.35 : (l === 1 ? 0.60 : 0.92)
+    });
+  }
+  // nebulas
+  S.nebulas = [
+    { x: W*0.15, y: H*0.08, r: 300, c: 'rgba(110,50,180,0.16)', sp: 0.08 },
+    { x: W*0.84, y: H*0.32, r: 340, c: 'rgba(40,90,190,0.13)', sp: 0.11 },
+    { x: W*0.42, y: H*0.78, r: 260, c: 'rgba(190,50,120,0.10)', sp: 0.06 },
+    { x: W*0.72, y: H*1.05, r: 240, c: 'rgba(60,150,170,0.09)', sp: 0.14 }
+  ];
+  touchTarget = null;
+}
+
+/* ---------- INPUT ---------- */
+function startGame() {
+  reset();
+  S.started = true;
+  AC();
+  sfx.launch();
+}
+
+window.addEventListener('keydown', function(e) {
+  const k = e.key.toLowerCase();
+  if (['arrowleft','arrowright','arrowup','arrowdown',' ','a','d','w','s','enter'].indexOf(k) !== -1) e.preventDefault();
+  if (e.repeat) return;
+
+  if (!S.started || S.over) {
+    if (k === ' ' || k === 'enter' || k === 'arrowup' || k === 'w') startGame();
+    return;
+  }
+  if (k === 'arrowleft' || k === 'a') keys.left = true;
+  else if (k === 'arrowright' || k === 'd') keys.right = true;
+  else if (k === 'arrowup' || k === 'w') keys.up = true;
+  else if (k === 'arrowdown' || k === 's') keys.down = true;
+  else if (k === ' ') keys.boost = true;
+}, { passive: false });
+
+window.addEventListener('keyup', function(e) {
+  const k = e.key.toLowerCase();
+  if (k === 'arrowleft' || k === 'a') keys.left = false;
+  else if (k === 'arrowright' || k === 'd') keys.right = false;
+  else if (k === 'arrowup' || k === 'w') keys.up = false;
+  else if (k === 'arrowdown' || k === 's') keys.down = false;
+  else if (k === ' ') keys.boost = false;
+});
+
+cvs.addEventListener('touchstart', function(e) {
+  e.preventDefault();
+  if (!S.started || S.over) { startGame(); return; }
+  const rect = cvs.getBoundingClientRect();
+  const t = e.changedTouches[0];
+  touchTarget = {
+    x: (t.clientX - rect.left) / rect.width * W,
+    y: (t.clientY - rect.top) / rect.height * H
+  };
+}, { passive: false });
+
+cvs.addEventListener('touchmove', function(e) {
+  e.preventDefault();
+  if (!touchTarget) return;
+  const rect = cvs.getBoundingClientRect();
+  const t = e.changedTouches[0];
+  touchTarget.x = (t.clientX - rect.left) / rect.width * W;
+  touchTarget.y = (t.clientY - rect.top) / rect.height * H;
+}, { passive: false });
+
+cvs.addEventListener('touchend', function(e) {
+  e.preventDefault();
+  touchTarget = null;
+}, { passive: false });
+
+cvs.addEventListener('mousedown', function() {
+  if (!S.started || S.over) startGame();
+});
+
+/* ---------- SPAWN ---------- */
+function spawnAsteroid(x, r, big) {
+  const seed = (Math.random() * 1e9) | 0;
+  const hue = AST_HUES[(Math.random() * AST_HUES.length) | 0];
+  const spr = makeAsteroidSprite(seed, hue);
+  const baseVy = big ? (70 + S.t * 0.5) : (140 + S.t * 1.1 + Math.random() * 40);
+  const vx = (Math.random() - 0.5) * (big ? 22 : 62);
+  S.asteroids.push({
+    x: x, y: -r - 60,
+    vx: vx, vy: Math.min(baseVy, 300),
+    r: r,
+    rot: Math.random() * Math.PI * 2,
+    rotSpd: (Math.random() - 0.5) * 1.6,
+    spr: spr,
+    nm: false
+  });
+}
+
+function spawnWave() {
+  const roll = Math.random();
+  if (roll < 0.56) {
+    spawnAsteroid(60 + Math.random() * (W - 120), 16 + Math.random() * 22, false);
+  } else if (roll < 0.82) {
+    // кластер мелких
+    const n = 2 + Math.floor(Math.random() * 3);
+    const baseX = 100 + Math.random() * (W - 200);
+    for (let i = 0; i < n; i++) {
+      spawnAsteroid(
+        baseX + (i - (n - 1) / 2) * 72 + (Math.random() - 0.5) * 28,
+        11 + Math.random() * 14,
+        false
+      );
+    }
+  } else {
+    // большая медленная глыба
+    spawnAsteroid(90 + Math.random() * (W - 180), 42 + Math.random() * 20, true);
+  }
+}
+
+/* ---------- DEATH ---------- */
+function die() {
+  S.over = true;
+  S.hitstop = 0.16;
+  S.shake = 30;
+  S.flash = 1;
+  sfx.boom();
+
+  const r = S.rocket;
+  for (let i = 0; i < 100; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 60 + Math.random() * 400;
+    S.particles.push({
+      x: r.x, y: r.y,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: 0.55 + Math.random() * 0.9,
+      max: 1.45,
+      sz: 2 + Math.random() * 3,
+      c: ['#ffd93d','#ff8c1a','#ff4b1f','#ffffff','#7ad3ff','#c7f04a'][(Math.random()*6)|0]
+    });
+  }
+  const sc = Math.floor(S.score);
+  if (sc > best) {
+    best = sc;
+    try { localStorage.setItem('kosmo_rocket_best', String(best)); } catch(e){}
+  }
+}
+
+/* ---------- PARTICLES ---------- */
+function updateParticles(dt) {
+  for (let i = S.particles.length - 1; i >= 0; i--) {
+    const p = S.particles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vx *= Math.exp(-1.8 * dt);
+    p.vy *= Math.exp(-1.8 * dt);
+    p.vy += 40 * dt;
+    p.life -= dt;
+    if (p.life <= 0) S.particles.splice(i, 1);
+  }
+}
+
+/* ---------- STEP (fixed-ish substep) ---------- */
+function step(dt) {
+  S.t += dt;
+  S.speed = 1 + Math.min(1.15, S.t / 68);
+  S.spawnThreshold = 0.95 - Math.min(0.55, S.t * 0.006);
+
+  const r = S.rocket;
+
+  /* --- boost --- */
+  S.boosting = keys.boost && S.boost > 0.02;
+  if (S.boosting) S.boost = Math.max(0, S.boost - dt * 0.52);
+  else S.boost = Math.min(1, S.boost + dt * 0.18);
+
+  const boostMul = S.boosting ? 1.85 : 1;
+  const speedNow = S.speed * boostMul;
+
+  S.score += dt * speedNow * 13;
+
+  /* --- thrust input --- */
+  let tx = 0, ty = 0;
+  if (keys.left) tx -= 1;
+  if (keys.right) tx += 1;
+  if (keys.up) ty -= 1;
+  if (keys.down) ty += 1;
+
+  if (touchTarget) {
+    const dx = touchTarget.x - r.x;
+    const dy = touchTarget.y - r.y;
+    const d = Math.hypot(dx, dy);
+    if (d > 10) { tx += dx / d; ty += dy / d; }
+  }
+  const mag = Math.hypot(tx, ty);
+  if (mag > 1) { tx /= mag; ty /= mag; }
+
+  const THRUST = 1500;
+  r.vx += tx * THRUST * dt;
+  r.vy += ty * THRUST * dt;
+
+  // drag (space-like, gives that slippery inertia feel)
+  const drag = Math.exp(-2.4 * dt);
+  r.vx *= drag;
+  r.vy *= drag;
+
+  // max speed
+  const sp = Math.hypot(r.vx, r.vy);
+  const MAXSP = 560;
+  if (sp > MAXSP) { r.vx = r.vx / sp * MAXSP; r.vy = r.vy / sp * MAXSP; }
+
+  r.x += r.vx * dt;
+  r.y += r.vy * dt;
+
+  // bounds with soft bounce
+  const minX = 26, maxX = W - 26, minY = 110, maxY = H - 36;
+  if (r.x < minX) { r.x = minX; r.vx = Math.max(0, r.vx * 0.2); }
+  if (r.x > maxX) { r.x = maxX; r.vx = Math.min(0, r.vx * 0.2); }
+  if (r.y < minY) { r.y = minY; r.vy = Math.max(0, r.vy * 0.2); }
+  if (r.y > maxY) { r.y = maxY; r.vy = Math.min(0, r.vy * 0.2); }
+
+  // tilt into direction
+  const targetAngle = Math.max(-0.55, Math.min(0.55, r.vx * 0.0011));
+  r.angle += (targetAngle - r.angle) * Math.min(1, dt * 10);
+
+  /* --- background scroll --- */
+  for (let i = 0; i < S.stars.length; i++) {
+    const st = S.stars[i];
+    st.y += (st.l + 1) * (26 + st.l * 42) * speedNow * dt;
+    if (st.y > H + 4) { st.y = -6; st.x = Math.random() * W; }
+  }
+  for (let i = 0; i < S.nebulas.length; i++) {
+    const nb = S.nebulas[i];
+    nb.y += nb.sp * 60 * speedNow * dt;
+    if (nb.y - nb.r > H + 120) { nb.y = -nb.r - 120; nb.x = Math.random() * W; }
+  }
+
+  /* --- speed lines when boosting --- */
+  if (S.boosting && Math.random() < dt * 50) {
+    S.speedLines.push({
+      x: Math.random() * W,
+      y: -30,
+      len: 50 + Math.random() * 90,
+      v: 950 + Math.random() * 700
+    });
+  }
+  for (let i = S.speedLines.length - 1; i >= 0; i--) {
+    const sl = S.speedLines[i];
+    sl.y += sl.v * dt;
+    if (sl.y > H + 120) S.speedLines.splice(i, 1);
+  }
+
+  /* --- exhaust trail while boosting --- */
+  if (S.boosting && Math.random() < dt * 90) {
+    S.particles.push({
+      x: r.x + (Math.random() - 0.5) * 10,
+      y: r.y + 20,
+      vx: (Math.random() - 0.5) * 60,
+      vy: 220 + Math.random() * 140,
+      life: 0.35 + Math.random() * 0.3,
+      max: 0.65,
+      sz: 2 + Math.random() * 2,
+      c: Math.random() < 0.5 ? '#ffb020' : '#ff4b1f'
+    });
+  }
+
+  /* --- spawning --- */
+  S.spawnAccum += dt * speedNow;
+  if (S.spawnAccum > S.spawnThreshold) {
+    S.spawnAccum = 0;
+    spawnWave();
+  }
+
+  /* --- asteroids --- */
+  for (let i = S.asteroids.length - 1; i >= 0; i--) {
+    const a = S.asteroids[i];
+    a.y += a.vy * speedNow * dt;
+    a.x += a.vx * speedNow * dt;
+    a.rot += a.rotSpd * dt;
+
+    // bounce off side walls
+    if (a.x < a.r * 0.5) { a.x = a.r * 0.5; a.vx = Math.abs(a.vx); }
+    if (a.x > W - a.r * 0.5) { a.x = W - a.r * 0.5; a.vx = -Math.abs(a.vx); }
+
+    // collision
+    const dx = a.x - r.x, dy = a.y - r.y;
+    const dist = Math.hypot(dx, dy);
+    const hitDist = a.r + 11;
+    if (dist < hitDist) { die(); return; }
+
+    // near miss
+    if (!a.nm && dist < hitDist + 44 && dist > hitDist && Math.abs(dy) < 95) {
+      a.nm = true;
+      S.nearMisses++;
+      S.combo++;
+      S.comboTimer = 1.7;
+      S.score += 30 + S.combo * 8;
+      S.boost = Math.min(1, S.boost + 0.075);
+      S.flash = Math.max(S.flash, 0.28);
+      sfx.near();
+
+      const ang = Math.atan2(dy, dx);
+      for (let k = 0; k < 9; k++) {
+        const aa = ang + (Math.random() - 0.5) * 1.6;
+        S.particles.push({
+          x: r.x + Math.cos(aa) * 20,
+          y: r.y + Math.sin(aa) * 20,
+          vx: Math.cos(aa) * 110,
+          vy: Math.sin(aa) * 110,
+          life: 0.42, max: 0.42,
+          sz: 2, c: '#7ad3ff'
+        });
+      }
+    }
+
+    // off screen
+    if (a.y - a.r > H + 70) { S.asteroids.splice(i, 1); continue; }
+  }
+
+  /* --- combo timer --- */
+  if (S.comboTimer > 0) {
+    S.comboTimer -= dt;
+    if (S.comboTimer <= 0) S.combo = 0;
+  }
+
+  updateParticles(dt);
+
+  S.shake = Math.max(0, S.shake - dt * 52);
+  S.flash = Math.max(0, S.flash - dt * 3.2);
+}
+
+/* ---------- UPDATE ---------- */
+function update(dt) {
+  if (!S) return;
+
+  if (!S.started) {
+    // idle drift
+    for (let i = 0; i < S.stars.length; i++) {
+      const st = S.stars[i];
+      st.y += (st.l + 1) * 18 * dt;
+      if (st.y > H + 4) { st.y = -6; st.x = Math.random() * W; }
+    }
+    return;
+  }
+
+  if (S.over) {
+    if (S.hitstop > 0) { S.hitstop -= dt; return; }
+    S.shake = Math.max(0, S.shake - dt * 52);
+    S.flash = Math.max(0, S.flash - dt * 3.2);
+    updateParticles(dt);
+    // stars keep drifting slowly for atmosphere
+    for (let i = 0; i < S.stars.length; i++) {
+      const st = S.stars[i];
+      st.y += (st.l + 1) * 10 * dt;
+      if (st.y > H + 4) { st.y = -6; st.x = Math.random() * W; }
+    }
+    return;
+  }
+
+  // substeps to prevent tunneling at high speed
+  const steps = Math.max(1, Math.ceil(dt / 0.02));
+  const sdt = dt / steps;
+  for (let i = 0; i < steps; i++) {
+    step(sdt);
+    if (S.over) break;
+  }
+}
+
+/* ---------- TEXT HELPER ---------- */
+function pxText(txt, x, y, size, col, align, shadow) {
+  ctx.font = 'bold ' + size + 'px ui-monospace, "Courier New", monospace';
+  ctx.textAlign = align || 'left';
+  ctx.textBaseline = 'alphabetic';
+  if (shadow !== false) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillText(txt, x + 3, y + 3);
+  }
+  ctx.fillStyle = col;
+  ctx.fillText(txt, x, y);
+}
+
+/* ---------- DRAW ROCKET ---------- */
+function drawRocket() {
+  const r = S.rocket;
+  ctx.save();
+  ctx.translate(r.x, r.y);
+  ctx.rotate(r.angle);
+
+  const dw = 26, dh = 44;
+
+  // flame (procedural pixel blocks)
+  const fl = 14 + Math.random() * 10 + (S.boosting ? 16 : 0);
+  const fw = 12 + (S.boosting ? 5 : 0);
+  for (let i = 0; i < 5; i++) {
+    const t = i / 5;
+    const w = fw * (1 - t * 0.55);
+    const yy = dh / 2 - 3 + t * fl;
+    ctx.globalAlpha = 1 - t * 0.7;
+    ctx.fillStyle = i < 2 ? '#fff3a0' : (i < 3 ? '#ffb020' : '#ff4b1f');
+    ctx.fillRect(-w / 2, yy, w, fl / 5 + 1.5);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.drawImage(SPR_ROCKET, -dw / 2, -dh / 2, dw, dh);
+  ctx.restore();
+
+  // engine glow
+  const g = ctx.createRadialGradient(r.x, r.y + 16, 0, r.x, r.y + 16, 34 + (S.boosting ? 22 : 0));
+  g.addColorStop(0, S.boosting ? 'rgba(255,220,120,0.55)' : 'rgba(255,160,60,0.30)');
+  g.addColorStop(1, 'rgba(255,80,20,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(r.x, r.y + 16, 34 + (S.boosting ? 22 : 0), 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/* ---------- DRAW HUD ---------- */
+function drawHUD() {
+  const sc = Math.floor(S.score);
+
+  // score panel
+  ctx.fillStyle = 'rgba(8,6,22,0.60)';
+  ctx.fillRect(16, 14, 232, 74);
+  ctx.fillStyle = 'rgba(120,200,255,0.18)';
+  ctx.fillRect(16, 14, 232, 2);
+  pxText('ОЧКИ', 32, 40, 15, '#7ad3ff');
+  pxText(String(sc), 32, 78, 36, '#ffffff');
+
+  // best
+  pxText('РЕКОРД ' + best, W - 16, 40, 16, 'rgba(255,255,255,0.5)', 'right');
+
+  // combo
+  if (S.combo > 1) {
+    const a = Math.min(1, S.comboTimer / 0.7);
+    ctx.globalAlpha = a;
+    const pulse = 1 + Math.sin(performance.now() / 90) * 0.06;
+    ctx.save();
+    ctx.translate(W - 16, 72);
+    ctx.scale(pulse, pulse);
+    pxText('x' + S.combo + ' ВБЛИЗИ', 0, 0, 22, '#ffd93d', 'right');
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  // boost bar
+  const bx = 16, by = H - 48, bw = 280, bh = 22;
+  ctx.fillStyle = 'rgba(8,6,22,0.6)';
+  ctx.fillRect(bx - 3, by - 3, bw + 6, bh + 6);
+  ctx.fillStyle = 'rgba(255,255,255,0.10)';
+  ctx.fillRect(bx, by, bw, bh);
+  const bg2 = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+  bg2.addColorStop(0, '#3aa0ff');
+  bg2.addColorStop(0.55, '#7ad3ff');
+  bg2.addColorStop(1, '#c7f04a');
+  ctx.fillStyle = bg2;
+  ctx.fillRect(bx, by, bw * S.boost, bh);
+  ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bx, by, bw, bh);
+  pxText('УСКОРЕНИЕ [SPACE]', bx + 8, by + 16, 13, '#0a1520', 'left', false);
+
+  // speed
+  pxText('СКОРОСТЬ x' + S.speed.toFixed(1), W - 16, H - 26, 16, 'rgba(255,255,255,0.5)', 'right');
+
+  // near-miss count
+  pxText('ВБЛИЗИ: ' + S.nearMisses, W - 16, H - 50, 14, 'rgba(199,240,74,0.65)', 'right');
+}
+
+/* ---------- START SCREEN ---------- */
+function drawStartScreen() {
+  ctx.fillStyle = 'rgba(4,3,14,0.78)';
+  ctx.fillRect(0, 0, W, H);
+
+  const bob = Math.sin(performance.now() / 500) * 6;
+
+  // title
+  ctx.font = 'bold 84px ui-monospace, "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  ctx.fillText('КОСМО-РАКЕТА', W/2 + 5, 178 + bob + 5);
+  const tg = ctx.createLinearGradient(0, 100, 0, 190);
+  tg.addColorStop(0, '#7ad3ff');
+  tg.addColorStop(1, '#c7f04a');
+  ctx.fillStyle = tg;
+  ctx.fillText('КОСМО-РАКЕТА', W/2, 178 + bob);
+
+  pxText('УКЛОНЯЙСЯ ОТ АСТЕРОИДОВ', W/2, 218, 20, 'rgba(255,255,255,0.6)', 'center');
+
+  // demo rocket
+  ctx.save();
+  ctx.translate(W / 2, 336);
+  const dw = 46, dh = 78;
+  const fl = 18 + Math.random() * 14;
+  for (let i = 0; i < 5; i++) {
+    const t = i / 5;
+    const w = 22 * (1 - t * 0.55);
+    ctx.globalAlpha = 1 - t * 0.7;
+    ctx.fillStyle = i < 2 ? '#fff3a0' : (i < 3 ? '#ffb020' : '#ff4b1f');
+    ctx.fillRect(-w / 2, dh / 2 - 4 + t * fl, w, fl / 5 + 1.5);
+  }
+  ctx.globalAlpha = 1;
+  ctx.drawImage(SPR_ROCKET, -dw / 2, -dh / 2, dw, dh);
+  ctx.restore();
+
+  ctx.globalAlpha = 0.6 + 0.4 * Math.sin(performance.now() / 320);
+  pxText('ПРОБЕЛ / TAP — ЗАПУСК', W / 2, 448, 24, '#8ef0c8', 'center');
+  ctx.globalAlpha = 1;
+
+  pxText('← → ↑ ↓ / WASD — ТЯГА (РАКЕТА ЛЕТИТ ПО ИНЕРЦИИ)', W / 2, 500, 15, 'rgba(255,255,255,0.45)', 'center');
+  pxText('ПРОБЕЛ — УСКОРЕНИЕ: БОЛЬШЕ ОЧКОВ И БОЛЬШЕ РИСКА', W / 2, 526, 15, 'rgba(255,255,255,0.45)', 'center');
+  pxText('ПРОЛЕТАЙ ВПЛОТНУЮ К АСТЕРОИДАМ — БОНУС И ЗАРЯД БУСТА', W / 2, 552, 14, 'rgba(199,240,74,0.65)', 'center');
+  pxText('НА ТЕЛЕФОНЕ: ВЕДИ ПАЛЬЦЕМ — РАКЕТА ТЯНЕТСЯ ЗА НИМ', W / 2, 578, 13, 'rgba(122,211,255,0.55)', 'center');
+}
+
+/* ---------- GAME OVER ---------- */
+function drawGameOver() {
+  ctx.fillStyle = 'rgba(30,4,10,0.78)';
+  ctx.fillRect(0, 0, W, H);
+
+  pxText('РАКЕТА УНИЧТОЖЕНА', W / 2, 178, 54, '#ff4b6b', 'center');
+
+  const sc = Math.floor(S.score);
+  const isBest = sc >= best;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(W / 2 - 210, 228, 420, 152);
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(W / 2 - 210, 228, 420, 152);
+
+  pxText('ОЧКИ', W / 2 - 175, 278, 18, '#7ad3ff');
+  pxText(String(sc), W / 2 - 175, 348, 54, '#ffffff');
+
+  pxText('ВБЛИЗИ', W / 2 + 45, 278, 18, '#ffd93d');
+  pxText(String(S.nearMisses), W / 2 + 45, 348, 54, '#ffd93d');
+
+  pxText(isBest ? 'НОВЫЙ РЕКОРД!' : 'РЕКОРД: ' + best, W / 2, 424, 22,
+    isBest ? '#8ef0c8' : 'rgba(255,255,255,0.6)', 'center');
+
+  ctx.globalAlpha = 0.55 + 0.45 * Math.sin(performance.now() / 280);
+  pxText('ПРОБЕЛ / TAP — ЕЩЁ РАЗ', W / 2, 500, 24, '#ffffff', 'center');
+  ctx.globalAlpha = 1;
+
+  pxText('СКОРОСТЬ x' + S.speed.toFixed(1) + '  ·  ВРЕМЯ ' + Math.floor(S.t) + 'с', W / 2, 546, 15, 'rgba(255,255,255,0.4)', 'center');
+}
+
+/* ---------- RENDER ---------- */
+function render() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  // shake
+  if (S.shake > 0.5) {
+    ctx.translate((Math.random() - 0.5) * S.shake, (Math.random() - 0.5) * S.shake);
+  }
+
+  // background gradient
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(-50, -50, W + 100, H + 100);
+
+  // nebulas
+  for (let i = 0; i < S.nebulas.length; i++) {
+    const nb = S.nebulas[i];
+    const g = ctx.createRadialGradient(nb.x, nb.y, 0, nb.x, nb.y, nb.r);
+    g.addColorStop(0, nb.c);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(nb.x - nb.r, nb.y - nb.r, nb.r * 2, nb.r * 2);
+  }
+
+  // stars
+  ctx.fillStyle = '#ffffff';
+  for (let i = 0; i < S.stars.length; i++) {
+    const st = S.stars[i];
+    ctx.globalAlpha = st.a;
+    ctx.fillRect(st.x | 0, st.y | 0, st.sz, st.sz);
+  }
+  ctx.globalAlpha = 1;
+
+  // speed lines
+  if (S.speedLines.length) {
+    ctx.strokeStyle = 'rgba(160,220,255,0.35)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < S.speedLines.length; i++) {
+      const sl = S.speedLines[i];
+      ctx.beginPath();
+      ctx.moveTo(sl.x, sl.y);
+      ctx.lineTo(sl.x, sl.y + sl.len);
+      ctx.stroke();
+    }
+  }
+
+  // asteroids
+  for (let i = 0; i < S.asteroids.length; i++) {
+    const a = S.asteroids[i];
+    ctx.save();
+    ctx.translate(a.x, a.y);
+    ctx.rotate(a.rot);
+    const d = a.r * 2;
+    ctx.drawImage(a.spr, -d / 2, -d / 2, d, d);
+    ctx.restore();
+  }
+
+  // rocket (hide on death — explosion replaces it)
+  if (!S.over) drawRocket();
+
+  // particles
+  for (let i = 0; i < S.particles.length; i++) {
+    const p = S.particles[i];
+    const al = Math.max(0, p.life / p.max);
+    ctx.globalAlpha = Math.min(1, al * 1.6);
+    ctx.fillStyle = p.c;
+    ctx.fillRect(p.x - p.sz / 2, p.y - p.sz / 2, p.sz, p.sz);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  // flash
+  if (S.flash > 0) {
+    if (S.over) {
+      ctx.fillStyle = 'rgba(255,90,60,' + (S.flash * 0.5) + ')';
+    } else {
+      ctx.fillStyle = 'rgba(140,220,255,' + (S.flash * 0.18) + ')';
+    }
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // vignette
+  const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.34, W / 2, H / 2, H * 0.98);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.68)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
+
+  // HUD / overlays
+  if (S.started) drawHUD();
+  if (!S.started) drawStartScreen();
+  else if (S.over && S.hitstop <= 0) drawGameOver();
+}
+
+/* ---------- LOOP ---------- */
+reset();
+let last = performance.now();
+function loop(now) {
+  let dt = (now - last) / 1000;
+  last = now;
+  if (dt > 0.05) dt = 0.05;
+  if (dt < 0) dt = 0;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+<a href="../index.html" class="gm-back" aria-label="Назад в меню">&larr; МЕНЮ</a>
+<style>.gm-back{position:fixed;top:10px;left:10px;z-index:9999;font:bold 12px/1 ui-monospace,"Courier New",monospace;letter-spacing:.08em;color:#fff;text-decoration:none;background:rgba(0,0,0,.55);border:2px solid rgba(255,255,255,.25);padding:8px 10px;border-radius:4px;opacity:.55;transition:opacity .15s,border-color .15s}.gm-back:hover,.gm-back:focus-visible{opacity:1;border-color:#ffd93d;outline:none}</style>
+</body>
+</html>

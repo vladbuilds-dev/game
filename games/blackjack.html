@@ -1,0 +1,1623 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>ПИКСЕЛЬ-БЛЕКДЖЕК 21 · онлайн без риска</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body{
+    width:100%; height:100%;
+    background:#05060a;
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
+    touch-action:none;
+    font-family: ui-monospace, "Courier New", monospace;
+  }
+  canvas{
+    display:block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    width: min(100vw, 150vh);
+    height: auto;
+    aspect-ratio: 960 / 600;
+    box-shadow: 0 0 100px rgba(60,220,140,.14), 0 0 0 2px #101620;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="600"></canvas>
+<script>
+"use strict";
+
+/* =========================================================
+   ПИКСЕЛЬ-БЛЕКДЖЕК 21
+   Онлайн-стол · виртуальные фишки · без риска
+   ========================================================= */
+
+const cvs = document.getElementById('c');
+const ctx = cvs.getContext('2d');
+const W = 960, H = 600;
+ctx.imageSmoothingEnabled = false;
+
+/* =========================================================
+   1. PIXEL FONT (3x5) — для рангов на картах
+   ========================================================= */
+const FONT3x5 = {
+  '0': ['111','101','101','101','111'],
+  '1': ['010','110','010','010','111'],
+  '2': ['111','001','111','100','111'],
+  '3': ['111','001','111','001','111'],
+  '4': ['101','101','111','001','001'],
+  '5': ['111','100','111','001','111'],
+  '6': ['111','100','111','101','111'],
+  '7': ['111','001','001','001','001'],
+  '8': ['111','101','111','101','111'],
+  '9': ['111','101','111','001','111'],
+  'A': ['111','101','111','101','101'],
+  'J': ['001','001','001','101','111'],
+  'Q': ['111','101','101','111','011'],
+  'K': ['101','101','110','101','101']
+};
+
+function drawPixelText(g, str, x, y, sc, col) {
+  g.fillStyle = col;
+  let cx = x;
+  for (let i = 0; i < str.length; i++) {
+    const art = FONT3x5[str[i]];
+    if (art) {
+      for (let r = 0; r < 5; r++) {
+        for (let c = 0; c < 3; c++) {
+          if (art[r][c] === '1') g.fillRect(cx + c*sc, y + r*sc, sc, sc);
+        }
+      }
+    }
+    cx += 4*sc;
+  }
+}
+
+function drawPixelArt(g, art, x, y, sc, col) {
+  g.fillStyle = col;
+  for (let r = 0; r < art.length; r++) {
+    const row = art[r];
+    for (let c = 0; c < row.length; c++) {
+      if (row[c] === 'X') g.fillRect(x + c*sc, y + r*sc, sc, sc);
+    }
+  }
+}
+
+/* ---------- SUIT PIXEL ART (7x7) ---------- */
+const SUIT_ART = {
+  h: ['.XX.XX.','XXXXXXX','XXXXXXX','XXXXXXX','.XXXXX.','..XXX..','...X...'],
+  d: ['...X...','..XXX..','.XXXXX.','XXXXXXX','.XXXXX.','..XXX..','...X...'],
+  s: ['...X...','..XXX..','.XXXXX.','XXXXXXX','XXXXXXX','.XXXXX.','..XXX..'],
+  c: ['...X...','..XXX..','...X...','.XX.XX.','XXXXXXX','XXXXXXX','..XXX..']
+};
+
+/* =========================================================
+   2. CARD SPRITES
+   ========================================================= */
+const CARD_W = 78, CARD_H = 112;
+const cardCache = {};
+
+function drawCardUnit(g, r, s, down) {
+  const w = CARD_W, h = CARD_H;
+
+  if (down) {
+    g.fillStyle = '#1a2566';
+    g.fillRect(0, 0, w, h);
+    g.fillStyle = '#28379e';
+    g.fillRect(5, 5, w - 10, h - 10);
+    // diamond lattice
+    g.fillStyle = '#1a2566';
+    for (let y = 5; y < h - 10; y += 10) {
+      for (let x = 5; x < w - 10; x += 10) {
+        const off = (Math.floor((y - 5) / 10) % 2) ? 5 : 0;
+        g.fillRect(x + off, y, 5, 5);
+      }
+    }
+    g.fillStyle = '#4b5fd0';
+    g.fillRect(w/2 - 8, h/2 - 8, 16, 16);
+    g.fillStyle = '#1a2566';
+    g.fillRect(w/2 - 4, h/2 - 4, 8, 8);
+    g.strokeStyle = '#0b1130';
+    g.lineWidth = 3;
+    g.strokeRect(1.5, 1.5, w - 3, h - 3);
+    g.strokeStyle = '#6a7de8';
+    g.lineWidth = 1;
+    g.strokeRect(5.5, 5.5, w - 11, h - 11);
+    return;
+  }
+
+  // face
+  g.fillStyle = '#f7f2e4';
+  g.fillRect(0, 0, w, h);
+  g.strokeStyle = '#252a38';
+  g.lineWidth = 3;
+  g.strokeRect(1.5, 1.5, w - 3, h - 3);
+
+  const isRed = (s === 'h' || s === 'd');
+  const col = isRed ? '#d62839' : '#1a1a2e';
+
+  drawPixelText(g, r, 7, 8, 3, col);
+  drawPixelArt(g, SUIT_ART[s], 7, 30, 2, col);
+
+  const bs = 5;
+  const bw = 7 * bs, bh = 7 * bs;
+  drawPixelArt(g, SUIT_ART[s], Math.floor(w/2 - bw/2), Math.floor(h/2 - bh/2 + 10), bs, col);
+}
+
+function getCardSprite(r, s, down) {
+  const key = down ? 'BACK' : (r + s);
+  let spr = cardCache[key];
+  if (!spr) {
+    spr = document.createElement('canvas');
+    spr.width = CARD_W;
+    spr.height = CARD_H;
+    const g = spr.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    drawCardUnit(g, r, s, down);
+    cardCache[key] = spr;
+  }
+  return spr;
+}
+
+/* =========================================================
+   3. AVATARS (procedural pixel faces)
+   ========================================================= */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+const AVATAR_CACHE = {};
+function getAvatar(seed) {
+  if (AVATAR_CACHE[seed]) return AVATAR_CACHE[seed];
+  const rnd = mulberry32(seed * 7919 + 13);
+  const S = 12;
+  const cnv = document.createElement('canvas');
+  cnv.width = S; cnv.height = S;
+  const g = cnv.getContext('2d');
+
+  const skins = ['#f2b98a','#e0a878','#c98a5a','#a86a3e','#8d5524','#ffd8b0'];
+  const hairs = ['#2b1a10','#4a2a12','#8a6a2a','#d8d8d8','#1a1a2e','#c0392b','#2e7d5b'];
+  const shirts = ['#3b5bdb','#c0392b','#27ae60','#8e44ad','#e67e22','#16a085','#d4a017'];
+  const bgs = ['#141f2e','#1f1425','#142420','#2a1f14'];
+
+  const skin = skins[(rnd() * skins.length) | 0];
+  const hair = hairs[(rnd() * hairs.length) | 0];
+  const shirt = shirts[(rnd() * shirts.length) | 0];
+  const bg = bgs[(rnd() * bgs.length) | 0];
+
+  const px = (x, y, c) => { g.fillStyle = c; g.fillRect(x, y, 1, 1); };
+
+  // background
+  g.fillStyle = bg;
+  g.fillRect(0, 0, S, S);
+
+  // shoulders / shirt
+  g.fillStyle = shirt;
+  g.fillRect(1, 9, 10, 3);
+  g.fillRect(2, 8, 8, 1);
+
+  // neck
+  g.fillStyle = skin;
+  g.fillRect(5, 7, 2, 2);
+
+  // head
+  g.fillRect(3, 2, 6, 6);
+  g.fillRect(2, 3, 1, 4);
+  g.fillRect(9, 3, 1, 4);
+
+  // hair
+  g.fillStyle = hair;
+  g.fillRect(3, 1, 6, 2);
+  g.fillRect(2, 2, 1, 2);
+  g.fillRect(9, 2, 1, 2);
+  if (rnd() < 0.5) { g.fillRect(3, 3, 1, 2); g.fillRect(8, 3, 1, 2); }
+
+  // eyes
+  g.fillStyle = '#141414';
+  g.fillRect(4, 4, 1, 1);
+  g.fillRect(7, 4, 1, 1);
+
+  // mouth
+  g.fillStyle = '#8a4a4a';
+  if (rnd() < 0.6) g.fillRect(5, 6, 2, 1);
+  else g.fillRect(5, 6, 1, 1);
+
+  AVATAR_CACHE[seed] = cnv;
+  return cnv;
+}
+
+/* =========================================================
+   4. AUDIO
+   ========================================================= */
+let actx = null;
+function AC() {
+  if (!actx) {
+    try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; }
+  }
+  return actx;
+}
+function beep(f0, f1, dur, vol, type, delay) {
+  const a = AC(); if (!a) return;
+  try {
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = type || 'square';
+    const t = a.currentTime + (delay || 0);
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+    o.connect(g); g.connect(a.destination);
+    o.start(t); o.stop(t + dur + 0.03);
+  } catch (e) {}
+}
+function noiseBurst(dur, vol, hp) {
+  const a = AC(); if (!a) return;
+  try {
+    const n = Math.floor(a.sampleRate * dur);
+    const buf = a.createBuffer(1, n, a.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2);
+    const src = a.createBufferSource();
+    src.buffer = buf;
+    const f = a.createBiquadFilter();
+    f.type = 'highpass';
+    f.frequency.value = hp || 1400;
+    const g = a.createGain();
+    g.gain.value = vol;
+    src.connect(f); f.connect(g); g.connect(a.destination);
+    src.start();
+  } catch (e) {}
+}
+const sfx = {
+  card() { noiseBurst(0.07, 0.14, 1600); },
+  chip() { beep(1400, 2200, 0.05, 0.045, 'square'); beep(2600, 1800, 0.05, 0.025, 'square', 0.02); },
+  win() { beep(660, 660, 0.09, 0.06); beep(880, 880, 0.09, 0.06, 'square', 0.09); beep(1320, 1320, 0.16, 0.06, 'square', 0.18); },
+  lose() { beep(300, 220, 0.16, 0.05, 'sawtooth'); beep(180, 120, 0.24, 0.05, 'sawtooth', 0.12); },
+  bj() { beep(660, 660, 0.08, 0.06); beep(880, 880, 0.08, 0.06, 'square', 0.08); beep(1100, 1100, 0.08, 0.06, 'square', 0.16); beep(1320, 1760, 0.30, 0.07, 'square', 0.24); },
+  push() { beep(520, 520, 0.1, 0.05); beep(520, 520, 0.1, 0.05, 'square', 0.13); },
+  msg() { beep(1600, 2000, 0.04, 0.03, 'square'); },
+  bonus() { beep(880, 1320, 0.1, 0.05); beep(1320, 1760, 0.16, 0.05, 'square', 0.1); }
+};
+
+/* =========================================================
+   5. CONSTANTS / HELPERS
+   ========================================================= */
+const SUITS = ['h', 'd', 's', 'c'];
+const RANKS = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+
+const TABLE_CX = 351;
+const SHOE_X = 620;
+const SHOE_Y = 62;
+
+function txt(str, x, y, size, col, align, bold) {
+  ctx.font = (bold === false ? '' : 'bold ') + size + 'px ui-monospace, "Courier New", monospace';
+  ctx.textAlign = align || 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = col;
+  ctx.fillText(str, x, y);
+}
+function txtS(str, x, y, size, col, align) {
+  ctx.font = 'bold ' + size + 'px ui-monospace, "Courier New", monospace';
+  ctx.textAlign = align || 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = 'rgba(0,0,0,0.72)';
+  ctx.fillText(str, x + 2, y + 2);
+  ctx.fillStyle = col;
+  ctx.fillText(str, x, y);
+}
+
+function pixelCircle(g, cx, cy, r, col) {
+  g.fillStyle = col;
+  for (let y = -r; y <= r; y++) {
+    const w = Math.floor(Math.sqrt(Math.max(0, r*r - y*y)));
+    g.fillRect(cx - w, cy + y, w * 2 + 1, 1);
+  }
+}
+
+/* =========================================================
+   6. GAME STATE
+   ========================================================= */
+const BOT_POOL = [
+  'Шкет_2077', 'КотБаюн', 'Люся_Х', 'ПиксельБосс',
+  'Дядя_Вова', 'Ниндзя_22', 'Мурзик_777', 'Тётя_Зина',
+  'Ракета_88', 'Громозека', 'Чип_и_Дейл', 'Мастер_Йода'
+];
+
+const CHAT_POOL = [
+  'дилер сегодня щедрый',
+  'го по-крупному!',
+  'у меня 20, держу',
+  'опять перебор...',
+  'кто-нибудь тут выигрывал?',
+  'красивая раздача',
+  'всё, иду ва-банк',
+  'эх, чуть-чуть не хватило',
+  'стрик пошёл!',
+  'этот стол фартовый',
+  'мне бы такую удачу',
+  'ставлю на чёрное... ой, не туда',
+  'дилер, ты мухлюешь :)',
+  'ну и карты...',
+  'плюсую, заходит',
+  'а я на удачу',
+  'кто в 21?',
+  'вот это поворот!',
+  'перебор на ровном месте',
+  'красиво ушёл',
+  'новичкам везёт',
+  'мне нравится этот стол',
+  'держимся, парни',
+  'нужен ещё один туз',
+  'дайте мне 10!'
+];
+
+let G = null;
+
+function makeBot(seat) {
+  const name = BOT_POOL[(Math.random() * BOT_POOL.length) | 0] + '_' + ((Math.random() * 90 + 10) | 0);
+  return {
+    seat: seat,
+    name: name,
+    avatar: getAvatar((Math.random() * 99999) | 0),
+    balance: 500 + ((Math.random() * 40) | 0) * 100,
+    bet: 0,
+    cards: [],
+    done: false,
+    net: 0,
+    bubble: '',
+    bubbleT: 0,
+    win: 0
+  };
+}
+
+function buildShoe() {
+  const shoe = [];
+  for (let d = 0; d < 6; d++) {
+    for (let si = 0; si < SUITS.length; si++) {
+      for (let ri = 0; ri < RANKS.length; ri++) {
+        shoe.push({ r: RANKS[ri], s: SUITS[si] });
+      }
+    }
+  }
+  for (let i = shoe.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    const t = shoe[i]; shoe[i] = shoe[j]; shoe[j] = t;
+  }
+  return shoe;
+}
+
+function resetGame() {
+  G = {
+    phase: 'bet',
+    balance: 1000,
+    bet: 0,
+    shoe: buildShoe(),
+    player: [],
+    dealer: [],
+    bots: [makeBot(0), makeBot(1)],
+    timers: [],
+    msg: '',
+    msgCol: '#fff',
+    subMsg: '',
+    net: 0,
+    handNo: 1,
+    flash: 0,
+    shake: 0,
+    winFlash: 0,
+    chat: [],
+    chatT: 0,
+    online: 1180 + ((Math.random() * 160) | 0),
+    ping: 18 + ((Math.random() * 22) | 0),
+    netT: 0,
+    mouse: { x: -100, y: -100 },
+    hover: null,
+    turnGlow: 0,
+    chipFly: [],
+    stats: { win: 0, lose: 0, push: 0, bj: 0 }
+  };
+  for (let i = 0; i < 5; i++) chatSay(pickChat(), 0.3 + i * 0.4);
+}
+
+function pickChat() {
+  return CHAT_POOL[(Math.random() * CHAT_POOL.length) | 0];
+}
+
+function chatSay(text, delay, who) {
+  G.chat.push({ text: text, t: 0, life: 0, delay: delay || 0, who: who || '' });
+  if (G.chat.length > 9) G.chat.shift();
+}
+
+/* =========================================================
+   7. CARD LOGIC
+   ========================================================= */
+function handValue(cards) {
+  let total = 0, aces = 0;
+  for (let i = 0; i < cards.length; i++) {
+    const c = cards[i];
+    if (c.r === 'A') { aces++; total += 11; }
+    else if (c.r === 'K' || c.r === 'Q' || c.r === 'J') total += 10;
+    else total += parseInt(c.r, 10);
+  }
+  while (total > 21 && aces > 0) { total -= 10; aces--; }
+  return total;
+}
+
+function isSoft(cards) {
+  let total = 0, aces = 0;
+  for (let i = 0; i < cards.length; i++) {
+    const c = cards[i];
+    if (c.r === 'A') { aces++; total += 11; }
+    else if (c.r === 'K' || c.r === 'Q' || c.r === 'J') total += 10;
+    else total += parseInt(c.r, 10);
+  }
+  while (total > 21 && aces > 0) { total -= 10; aces--; }
+  return aces > 0;
+}
+
+function visibleValue(cards) {
+  return handValue(cards.filter(function (c) { return !c.down; }));
+}
+
+function drawFromShoe(down) {
+  if (G.shoe.length < 30) {
+    G.shoe = buildShoe();
+    chatSay('Дилер: тасую новую колоду', 0.1);
+  }
+  const c = G.shoe.pop();
+  return {
+    r: c.r, s: c.s, down: !!down,
+    cx: SHOE_X + (Math.random() - 0.5) * 12,
+    cy: SHOE_Y + (Math.random() - 0.5) * 12,
+    age: 0
+  };
+}
+
+function after(sec, fn) {
+  G.timers.push({ t: sec, fn: fn });
+}
+
+function processTimers(dt) {
+  for (let i = G.timers.length - 1; i >= 0; i--) {
+    const tm = G.timers[i];
+    tm.t -= dt;
+    if (tm.t <= 0) { G.timers.splice(i, 1); tm.fn(); }
+  }
+}
+
+/* =========================================================
+   8. GAME FLOW
+   ========================================================= */
+function enterBetPhase() {
+  G.phase = 'bet';
+  G.player = [];
+  G.dealer = [];
+  G.bet = 0;
+  G.net = 0;
+  G.msg = '';
+  G.subMsg = '';
+  G.bots.forEach(function (b) { b.cards = []; b.bet = 0; b.done = false; b.net = 0; b.bubble = ''; });
+
+  if (G.balance < 5) {
+    G.balance += 500;
+    G.msg = 'БОНУС +500';
+    G.msgCol = '#ffd93d';
+    G.subMsg = 'виртуальные фишки · играй без риска';
+    sfx.bonus();
+    after(2.0, function () { if (G.phase === 'bet') { G.msg = ''; G.subMsg = ''; } });
+  }
+}
+
+function placeBet(v) {
+  if (G.phase !== 'bet') return;
+  if (G.bet + v > G.balance) {
+    G.msg = 'НЕДОСТАТОЧНО ФИШЕК';
+    G.msgCol = '#ff4b6b';
+    after(1.2, function () { if (G.phase === 'bet') G.msg = ''; });
+    return;
+  }
+  G.bet += v;
+  sfx.chip();
+  G.chipFly.push({ x: 351, y: 505, t: 0, v: v });
+}
+
+function clearBet() {
+  if (G.phase !== 'bet') return;
+  G.bet = 0;
+  sfx.chip();
+}
+
+function startDeal() {
+  if (G.phase !== 'bet') return;
+  if (G.bet < 5) {
+    G.msg = 'МИНИМАЛЬНАЯ СТАВКА 5';
+    G.msgCol = '#ffd93d';
+    after(1.4, function () { if (G.phase === 'bet') G.msg = ''; });
+    return;
+  }
+  if (G.bet > G.balance) return;
+
+  G.balance -= G.bet;
+  G.phase = 'deal';
+  G.player = [];
+  G.dealer = [];
+  G.msg = '';
+  G.subMsg = '';
+  G.chipFly = [];
+
+  // bots bet
+  const betOpts = [25, 50, 100, 200, 500];
+  G.bots.forEach(function (b) {
+    b.cards = [];
+    b.bet = Math.min(b.balance, betOpts[(Math.random() * betOpts.length) | 0]);
+    b.balance -= b.bet;
+    b.done = false;
+    b.net = 0;
+  });
+
+  // deal order
+  const order = [
+    { who: 'player', d: 0.02, down: false },
+    { who: 'dealer', d: 0.18, down: false },
+    { who: 'player', d: 0.34, down: false },
+    { who: 'dealer', d: 0.50, down: true }
+  ];
+  order.forEach(function (o) {
+    after(o.d, function () {
+      const card = drawFromShoe(o.down);
+      if (o.who === 'player') G.player.push(card);
+      else G.dealer.push(card);
+      sfx.card();
+    });
+  });
+
+  // bots get 2 cards
+  G.bots.forEach(function (b, bi) {
+    after(0.66 + bi * 0.10, function () { b.cards.push(drawFromShoe(false)); sfx.card(); });
+    after(0.74 + bi * 0.10, function () { b.cards.push(drawFromShoe(false)); sfx.card(); });
+  });
+
+  after(1.45, function () {
+    const pv = handValue(G.player);
+    if (pv === 21) {
+      G.dealer[1].down = false;
+      sfx.card();
+      G.msg = 'БЛЕКДЖЕК!';
+      G.msgCol = '#ffd93d';
+      after(0.8, function () { resolveHand(); });
+    } else {
+      G.phase = 'player';
+      G.canDouble = G.balance >= G.bet;
+      G.msg = 'ВАШ ХОД';
+      G.msgCol = '#8ef0c8';
+      G.turnGlow = 1;
+    }
+  });
+}
+
+function addCardTo(who, card) {
+  if (who === 'player') G.player.push(card);
+  else G.dealer.push(card);
+}
+
+function doHit() {
+  if (G.phase !== 'player') return;
+  G.canDouble = false;
+  const card = drawFromShoe(false);
+  G.player.push(card);
+  sfx.card();
+  G.turnGlow = 1;
+  after(0.35, function () {
+    const v = handValue(G.player);
+    if (v > 21) {
+      G.msg = 'ПЕРЕБОР';
+      G.msgCol = '#ff4b6b';
+      endPlayerTurn(true);
+    } else if (v === 21) {
+      endPlayerTurn(false);
+    }
+  });
+}
+
+function doStand() {
+  if (G.phase !== 'player') return;
+  endPlayerTurn(false);
+}
+
+function doDouble() {
+  if (G.phase !== 'player') return;
+  if (!G.canDouble || G.balance < G.bet) return;
+  G.balance -= G.bet;
+  G.bet *= 2;
+  G.canDouble = false;
+  const card = drawFromShoe(false);
+  G.player.push(card);
+  sfx.card();
+  sfx.chip();
+  G.turnGlow = 1;
+  after(0.55, function () {
+    endPlayerTurn(handValue(G.player) > 21);
+  });
+}
+
+function endPlayerTurn(busted) {
+  G.phase = 'dealer';
+  G.msg = '';
+  G.turnGlow = 0;
+
+  // reveal hole
+  if (G.dealer[1]) G.dealer[1].down = false;
+  sfx.card();
+
+  // bots resolve
+  G.bots.forEach(function (b, bi) {
+    after(0.30 + bi * 0.15, function () {
+      botPlayOut(b);
+    });
+  });
+
+  after(0.75 + G.bots.length * 0.15, function () {
+    if (busted) {
+      after(0.5, resolveHand);
+    } else {
+      dealerStep();
+    }
+  });
+}
+
+function botPlayOut(b) {
+  // простой бот: добирает до 17
+  let guard = 0;
+  while (handValue(b.cards) < 17 && guard < 6) {
+    b.cards.push(drawFromShoe(false));
+    guard++;
+  }
+  b.done = true;
+  sfx.card();
+}
+
+function dealerStep() {
+  const v = handValue(G.dealer);
+  if (v < 17) {
+    after(0.55, function () {
+      G.dealer.push(drawFromShoe(false));
+      sfx.card();
+      dealerStep();
+    });
+  } else {
+    after(0.5, resolveHand);
+  }
+}
+
+function resolveHand() {
+  G.phase = 'result';
+
+  const pv = handValue(G.player);
+  const dv = handValue(G.dealer);
+  const pBJ = (G.player.length === 2 && pv === 21);
+  const dBJ = (G.dealer.length === 2 && dv === 21);
+
+  let payout = 0;
+  let msg = '';
+  let col = '#fff';
+  let winKind = '';
+
+  if (pv > 21) {
+    payout = 0;
+    msg = 'ПЕРЕБОР';
+    col = '#ff4b6b';
+    winKind = 'lose';
+  } else if (pBJ && dBJ) {
+    payout = G.bet;
+    msg = 'НИЧЬЯ · БЛЕКДЖЕК';
+    col = '#9aa8c8';
+    winKind = 'push';
+  } else if (pBJ) {
+    payout = G.bet * 2.5;
+    msg = 'БЛЕКДЖЕК!';
+    col = '#ffd93d';
+    winKind = 'bj';
+  } else if (dBJ) {
+    payout = 0;
+    msg = 'БЛЕКДЖЕК ДИЛЕРА';
+    col = '#ff4b6b';
+    winKind = 'lose';
+  } else if (dv > 21) {
+    payout = G.bet * 2;
+    msg = 'ДИЛЕР ПЕРЕБРАЛ!';
+    col = '#4be0a8';
+    winKind = 'win';
+  } else if (pv > dv) {
+    payout = G.bet * 2;
+    msg = 'ПОБЕДА!';
+    col = '#4be0a8';
+    winKind = 'win';
+  } else if (pv < dv) {
+    payout = 0;
+    msg = 'ДИЛЕР ВЫИГРАЛ';
+    col = '#ff4b6b';
+    winKind = 'lose';
+  } else {
+    payout = G.bet;
+    msg = 'НИЧЬЯ';
+    col = '#9aa8c8';
+    winKind = 'push';
+  }
+
+  G.balance += payout;
+  G.net = payout - G.bet;
+  G.msg = msg;
+  G.msgCol = col;
+
+  if (winKind === 'bj') { sfx.bj(); G.winFlash = 1; }
+  else if (winKind === 'win') { sfx.win(); G.winFlash = 0.8; }
+  else if (winKind === 'push') { sfx.push(); }
+  else { sfx.lose(); G.shake = 8; }
+
+  if (winKind === 'bj') G.stats.bj++;
+  else if (winKind === 'win') G.stats.win++;
+  else if (winKind === 'lose') G.stats.lose++;
+  else G.stats.push++;
+
+  // bots results
+  G.bots.forEach(function (b) {
+    const bv = handValue(b.cards);
+    const bBJ = (b.cards.length === 2 && bv === 21);
+    let bp = 0;
+    if (bv > 21) bp = 0;
+    else if (bBJ && !dBJ) bp = b.bet * 2.5;
+    else if (bBJ && dBJ) bp = b.bet;
+    else if (dBJ) bp = 0;
+    else if (dv > 21) bp = b.bet * 2;
+    else if (bv > dv) bp = b.bet * 2;
+    else if (bv < dv) bp = 0;
+    else bp = b.bet;
+
+    b.balance += bp;
+    b.net = bp - b.bet;
+    b.win = bp > b.bet ? 1 : (bp < b.bet ? -1 : 0);
+    if (bp > b.bet) {
+      b.bubble = ['+', 'красиво!', 'есть!', 'во!'][(Math.random() * 4) | 0];
+      b.bubbleT = 2.2;
+    } else if (bp < b.bet) {
+      b.bubble = ['эх...', 'блин', 'опять', 'ну вот'][(Math.random() * 4) | 0];
+      b.bubbleT = 2.0;
+    }
+  });
+
+  // chat reactions
+  if (winKind === 'bj') after(0.4, function () { chatSay('ВАУ! БЛЕКДЖЕК!', 0, 'Дилер'); });
+  else if (winKind === 'win') after(0.4, function () { chatSay(['+1', 'везёт!', 'красиво'][(Math.random() * 3) | 0], 0, ''); });
+  else if (winKind === 'lose') after(0.4, function () { chatSay(['сочувствую', 'бывает', 'в следующий раз'][(Math.random() * 3) | 0], 0, ''); });
+
+  G.handNo++;
+  after(2.6, function () { if (G.phase === 'result') enterBetPhase(); });
+}
+
+function continueFromResult() {
+  if (G.phase !== 'result') return;
+  G.timers = G.timers.filter(function (t) { return false; });
+  enterBetPhase();
+}
+
+/* =========================================================
+   9. INPUT
+   ========================================================= */
+function canvasPos(clientX, clientY) {
+  const r = cvs.getBoundingClientRect();
+  return {
+    x: (clientX - r.left) / r.width * W,
+    y: (clientY - r.top) / r.height * H
+  };
+}
+
+function currentButtons() {
+  const b = [];
+  if (!G) return b;
+
+  if (G.phase === 'bet') {
+    const vals = [5, 25, 100, 500];
+    const cols = ['#e8e8ee', '#d62839', '#27ae60', '#1a1a2e'];
+    vals.forEach(function (v, i) {
+      b.push({
+        id: 'chip' + v, x: 62 + i * 76, y: 496, w: 64, h: 64,
+        val: v, label: String(v), kind: 'chip', col: cols[i]
+      });
+    });
+    b.push({ id: 'clear', x: 376, y: 496, w: 90, h: 64, label: 'СБРОС', kind: 'btn' });
+    b.push({ id: 'deal', x: 478, y: 496, w: 160, h: 64, label: 'РАЗДАТЬ', kind: 'primary', enabled: G.bet >= 5 && G.bet <= G.balance });
+  } else if (G.phase === 'player') {
+    b.push({ id: 'hit', x: 128, y: 496, w: 140, h: 64, label: 'ЕЩЁ', kind: 'btn' });
+    b.push({ id: 'stand', x: 280, y: 496, w: 140, h: 64, label: 'ХВАТИТ', kind: 'primary' });
+    b.push({
+      id: 'double', x: 432, y: 496, w: 140, h: 64, label: 'УДВОИТЬ', kind: 'btn',
+      enabled: G.canDouble && G.balance >= G.bet
+    });
+  } else if (G.phase === 'result') {
+    b.push({ id: 'next', x: 351 - 110, y: 496, w: 220, h: 64, label: 'ЕЩЁ РАЗ', kind: 'primary' });
+  }
+  return b;
+}
+
+function handleClick(px, py) {
+  const btns = currentButtons();
+  for (let i = 0; i < btns.length; i++) {
+    const b = btns[i];
+    if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
+      if (b.enabled === false) return;
+      if (b.id === 'deal') startDeal();
+      else if (b.id === 'clear') clearBet();
+      else if (b.id.indexOf('chip') === 0) placeBet(b.val);
+      else if (b.id === 'hit') doHit();
+      else if (b.id === 'stand') doStand();
+      else if (b.id === 'double') doDouble();
+      else if (b.id === 'next') continueFromResult();
+      return;
+    }
+  }
+  // клик вне кнопок — во время result продолжаем
+  if (G.phase === 'result') continueFromResult();
+}
+
+cvs.addEventListener('mousemove', function (e) {
+  const p = canvasPos(e.clientX, e.clientY);
+  if (!G) return;
+  G.mouse.x = p.x; G.mouse.y = p.y;
+});
+
+cvs.addEventListener('mousedown', function (e) {
+  AC();
+  const p = canvasPos(e.clientX, e.clientY);
+  handleClick(p.x, p.y);
+});
+
+cvs.addEventListener('touchstart', function (e) {
+  e.preventDefault();
+  AC();
+  const t = e.changedTouches[0];
+  const p = canvasPos(t.clientX, t.clientY);
+  if (G) { G.mouse.x = p.x; G.mouse.y = p.y; }
+  handleClick(p.x, p.y);
+}, { passive: false });
+
+window.addEventListener('keydown', function (e) {
+  const k = e.key.toLowerCase();
+  if ([' ', 'enter', 'arrowleft', 'arrowright', 'arrowup', 'arrowdown'].indexOf(k) !== -1) e.preventDefault();
+
+  if (!G) return;
+
+  if (G.phase === 'bet') {
+    if (k === '1') placeBet(5);
+    else if (k === '2') placeBet(25);
+    else if (k === '3') placeBet(100);
+    else if (k === '4') placeBet(500);
+    else if (k === 'enter' || k === ' ') startDeal();
+    else if (k === 'c' || k === 'backspace') clearBet();
+  } else if (G.phase === 'player') {
+    if (k === 'h' || k === 'arrowleft' || k === '1') doHit();
+    else if (k === 's' || k === 'arrowright' || k === '2' || k === ' ') doStand();
+    else if (k === 'd' || k === 'arrowup' || k === '3') doDouble();
+  } else if (G.phase === 'result') {
+    if (k === ' ' || k === 'enter') continueFromResult();
+  }
+});
+
+/* =========================================================
+   10. UPDATE
+   ========================================================= */
+function update(dt) {
+  if (!G) return;
+
+  processTimers(dt);
+
+  // card animation
+  const allCards = G.player.concat(G.dealer);
+  G.bots.forEach(function (b) { allCards.push.apply(allCards, b.cards); });
+  for (let i = 0; i < allCards.length; i++) allCards[i].age += dt;
+
+  // chat
+  for (let i = G.chat.length - 1; i >= 0; i--) {
+    const c = G.chat[i];
+    if (c.delay > 0) { c.delay -= dt; continue; }
+    c.life += dt;
+    if (c.life > 11) G.chat.splice(i, 1);
+  }
+  G.chatT -= dt;
+  if (G.chatT <= 0) {
+    G.chatT = 2.6 + Math.random() * 4.5;
+    if (Math.random() < 0.72) {
+      const bot = G.bots[(Math.random() * G.bots.length) | 0];
+      chatSay(pickChat(), 0, Math.random() < 0.55 ? bot.name : '');
+    }
+  }
+
+  // bots bubbles
+  G.bots.forEach(function (b) { if (b.bubbleT > 0) b.bubbleT -= dt; });
+
+  // online / ping drift
+  G.netT -= dt;
+  if (G.netT <= 0) {
+    G.netT = 1.4 + Math.random() * 1.6;
+    G.online += ((Math.random() * 11) | 0) - 5;
+    G.online = Math.max(940, Math.min(1580, G.online));
+    G.ping = Math.max(9, Math.min(88, G.ping + ((Math.random() * 7) | 0) - 3));
+  }
+
+  // chip fly
+  for (let i = G.chipFly.length - 1; i >= 0; i--) {
+    const cf = G.chipFly[i];
+    cf.t += dt * 2.4;
+    if (cf.t >= 1) G.chipFly.splice(i, 1);
+  }
+
+  // decay
+  G.flash = Math.max(0, G.flash - dt * 3.4);
+  G.shake = Math.max(0, G.shake - dt * 40);
+  G.winFlash = Math.max(0, G.winFlash - dt * 1.4);
+  if (G.turnGlow > 0) G.turnGlow = Math.max(0, G.turnGlow - dt * 0.7);
+}
+
+/* =========================================================
+   11. RENDER
+   ========================================================= */
+function drawTopBar() {
+  ctx.fillStyle = '#080c14';
+  ctx.fillRect(0, 0, W, 54);
+  ctx.fillStyle = '#16202e';
+  ctx.fillRect(0, 52, W, 2);
+
+  // left: room
+  ctx.fillStyle = '#ffd93d';
+  ctx.fillRect(20, 18, 18, 18);
+  ctx.fillStyle = '#0a0f18';
+  ctx.fillRect(24, 22, 10, 10);
+  txtS('ПИКСЕЛЬ-КАЗИНО', 48, 32, 17, '#ffd93d');
+  txt('СТОЛ #7', 220, 32, 14, 'rgba(255,255,255,0.4)');
+
+  // center: online
+  const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 420);
+  ctx.fillStyle = 'rgba(80,240,140,' + pulse + ')';
+  ctx.beginPath();
+  ctx.arc(W / 2 - 96, 26, 5, 0, Math.PI * 2);
+  ctx.fill();
+  txtS('ОНЛАЙН ' + G.online, W / 2 - 84, 32, 15, '#4be0a8');
+
+  txt('ПИНГ ' + G.ping + ' МС', W / 2 + 20, 32, 14, 'rgba(160,200,255,0.7)');
+
+  // right: no-risk banner
+  ctx.fillStyle = 'rgba(80,240,140,0.13)';
+  ctx.fillRect(W - 336, 12, 320, 30);
+  ctx.strokeStyle = 'rgba(80,240,140,0.4)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(W - 336, 12, 320, 30);
+  txtS('ВИРТУАЛЬНЫЕ ФИШКИ · БЕЗ РИСКА', W - 176, 33, 14, '#8ef0c8', 'center');
+}
+
+function drawTableFelt() {
+  const x = 12, y = 66, w = 678, h = 442;
+
+  // outer rim
+  ctx.fillStyle = '#14261f';
+  ctx.fillRect(x - 4, y - 4, w + 8, h + 8);
+  ctx.strokeStyle = '#1e4d3c';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
+
+  // felt
+  const g = ctx.createLinearGradient(0, y, 0, y + h);
+  g.addColorStop(0, '#0e3128');
+  g.addColorStop(0.5, '#0a2620');
+  g.addColorStop(1, '#071c17');
+  ctx.fillStyle = g;
+  ctx.fillRect(x, y, w, h);
+
+  // inner arc line (classic blackjack table arc)
+  ctx.strokeStyle = 'rgba(120,220,180,0.13)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(351, y + h + 60, 300, Math.PI * 1.18, Math.PI * 1.82);
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(120,220,180,0.09)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(351, y + h + 60, 250, Math.PI * 1.16, Math.PI * 1.84);
+  ctx.stroke();
+
+  // table text
+  ctx.save();
+  ctx.globalAlpha = 0.22;
+  txt('BLACKJACK ПЛАТИТ 3 : 2', 351, y + 88, 15, '#a8e8c8', 'center');
+  txt('ДИЛЕР ОБЯЗАН БРАТЬ ДО 17', 351, y + 110, 13, '#a8e8c8', 'center');
+  ctx.restore();
+
+  // insurance line
+  ctx.save();
+  ctx.globalAlpha = 0.10;
+  txt('СТРАХОВКА  ·  ВЫПЛАЧИВАЕТСЯ 2 : 1', 351, y + 292, 13, '#a8e8c8', 'center');
+  ctx.restore();
+}
+
+function drawShoe() {
+  // the card shoe in the top-right of the table
+  const x = SHOE_X - 46, y = SHOE_Y - 16;
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(x + 4, y + 6, 92, 46);
+  ctx.fillStyle = '#2a2a3a';
+  ctx.fillRect(x, y, 92, 46);
+  ctx.fillStyle = '#3a3a50';
+  ctx.fillRect(x + 3, y + 3, 86, 40);
+
+  // stacked card edge
+  const left = Math.max(0, G.shoe.length);
+  const barW = Math.max(4, Math.min(78, (left / 312) * 78));
+  ctx.fillStyle = '#e8e8f0';
+  ctx.fillRect(x + 7, y + 7, barW, 32);
+  ctx.fillStyle = '#c8c8d8';
+  ctx.fillRect(x + 7, y + 7, barW, 4);
+  ctx.strokeStyle = '#1a1a28';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x + 6, y + 6, barW + 2, 34);
+
+  txt('ТАСОВКА', SHOE_X, y + 62, 11, 'rgba(255,255,255,0.35)', 'center');
+}
+
+function handSlotPos(i, n, centerX, baseY, scale) {
+  const sp = 84 * scale;
+  const total = (n - 1) * sp;
+  return {
+    x: centerX - total / 2 + i * sp - (CARD_W * scale) / 2,
+    y: baseY
+  };
+}
+
+function renderHand(cards, centerX, baseY, scale, hideHole, dim) {
+  const n = cards.length;
+  for (let i = 0; i < n; i++) {
+    const c = cards[i];
+    const tp = handSlotPos(i, n, centerX, baseY, scale);
+
+    // smooth approach
+    const k = 1 - Math.exp(-16 * (1 / 60));
+    c.cx += (tp.x - c.cx) * Math.min(1, k * 1.6);
+    c.cy += (tp.y - c.cy) * Math.min(1, k * 1.6);
+
+    const lift = Math.sin(Math.min(1, c.age / 0.34) * Math.PI) * 46;
+
+    const hidden = c.down && hideHole;
+    const spr = getCardSprite(c.r, c.s, hidden);
+
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.32)';
+    ctx.fillRect(c.cx + 4, c.cy + 5 - lift, CARD_W * scale, CARD_H * scale);
+
+    if (dim) ctx.globalAlpha = 0.62;
+    ctx.drawImage(spr, c.cx, c.cy - lift, CARD_W * scale, CARD_H * scale);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawValueBadge(cx, cy, val, soft, active, label) {
+  const text = soft ? (val - 10) + '/' + val : String(val);
+  const w = 62 + (text.length - 2) * 9;
+  const h = 28;
+
+  ctx.fillStyle = active ? 'rgba(80,240,140,0.20)' : 'rgba(8,14,22,0.78)';
+  ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
+  ctx.strokeStyle = active ? 'rgba(80,240,140,0.85)' : 'rgba(255,255,255,0.22)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(cx - w / 2, cy - h / 2, w, h);
+
+  if (label) {
+    txt(label, cx, cy - h / 2 - 5, 11, 'rgba(255,255,255,0.4)', 'center');
+  }
+  txtS(text, cx, cy + 9, 19, active ? '#8ef0c8' : '#ffffff', 'center');
+}
+
+function drawBot(b) {
+  const isLeft = b.seat === 0;
+  const bx = isLeft ? 108 : 594;
+  const by = 244;
+
+  // avatar frame
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(bx - 30, by - 30, 60, 60);
+  ctx.fillStyle = '#0e1a26';
+  ctx.fillRect(bx - 28, by - 28, 56, 56);
+  ctx.drawImage(b.avatar, bx - 24, by - 24, 48, 48);
+  ctx.strokeStyle = b.win === 1 ? 'rgba(80,240,140,0.9)' : (b.win === -1 ? 'rgba(255,75,107,0.8)' : 'rgba(255,255,255,0.18)');
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bx - 28, by - 28, 56, 56);
+
+  // name
+  txt(b.name, bx, by + 48, 13, '#a8c0e0', 'center');
+  // balance
+  txt('₡ ' + b.balance, bx, by + 66, 12, 'rgba(255,217,61,0.75)', 'center');
+
+  // bet chip
+  if (b.bet > 0) {
+    drawChip(bx + (isLeft ? 62 : -62), by + 6, 17, b.bet, 1);
+  }
+
+  // mini cards
+  const cards = b.cards;
+  const n = cards.length;
+  if (n > 0) {
+    const sc = 0.46;
+    const sp = 34;
+    const total = (n - 1) * sp;
+    const startX = bx - total / 2 - (CARD_W * sc) / 2;
+    const baseY = by + 82;
+    for (let i = 0; i < n; i++) {
+      const c = cards[i];
+      const tp = { x: startX + i * sp, y: baseY };
+      const k = 1 - Math.exp(-16 / 60);
+      c.cx += (tp.x - c.cx) * Math.min(1, k * 1.6);
+      c.cy += (tp.y - c.cy) * Math.min(1, k * 1.6);
+      const lift = Math.sin(Math.min(1, c.age / 0.34) * Math.PI) * 40;
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.fillRect(c.cx + 2, c.cy + 3 - lift, CARD_W * sc, CARD_H * sc);
+      ctx.drawImage(getCardSprite(c.r, c.s, false), c.cx, c.cy - lift, CARD_W * sc, CARD_H * sc);
+    }
+    // value
+    const v = handValue(cards);
+    const vx = bx;
+    const vy = baseY + CARD_H * sc + 16;
+    const col = v > 21 ? '#ff4b6b' : (v === 21 ? '#ffd93d' : '#c8d8f0');
+    txtS(String(v), vx, vy, 15, col, 'center');
+  }
+
+  // bubble
+  if (b.bubbleT > 0) {
+    const a = Math.min(1, b.bubbleT);
+    ctx.globalAlpha = a;
+    ctx.font = 'bold 14px ui-monospace, monospace';
+    const tw = ctx.measureText(b.bubble).width;
+    const bw = tw + 20, bh = 26;
+    const bxx = bx - bw / 2;
+    const byy = by - 78;
+    ctx.fillStyle = 'rgba(255,255,255,0.94)';
+    ctx.fillRect(bxx, byy, bw, bh);
+    ctx.fillStyle = 'rgba(255,255,255,0.94)';
+    ctx.beginPath();
+    ctx.moveTo(bx - 6, byy + bh);
+    ctx.lineTo(bx + 6, byy + bh);
+    ctx.lineTo(bx, byy + bh + 8);
+    ctx.closePath();
+    ctx.fill();
+    txt(b.bubble, bx, byy + 18, 14, '#152030', 'center');
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawChip(cx, cy, r, val, alpha) {
+  const cols = {
+    5: ['#f0f0f6', '#b8b8c8', '#7a7a92'],
+    25: ['#e63946', '#a01f2c', '#6e121c'],
+    100: ['#2ecc71', '#1a8a4a', '#0e5c30'],
+    500: ['#3b3b5c', '#1a1a30', '#0a0a18'],
+    1000: ['#ffd93d', '#c9a227', '#8a6f0e']
+  };
+  const key = [5, 25, 100, 500, 1000].reduce(function (p, c) {
+    return Math.abs(c - val) < Math.abs(p - val) ? c : p;
+  }, 5);
+  const cc = cols[key] || cols[5];
+
+  ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.42)';
+  for (let y = -r; y <= r; y++) {
+    const w = Math.floor(Math.sqrt(Math.max(0, r * r - y * y)));
+    ctx.fillRect(cx - w + 3, cy + y + 4, w * 2 + 1, 1);
+  }
+
+  pixelCircle(ctx, cx, cy, r, cc[0]);
+  pixelCircle(ctx, cx, cy, r - 2, cc[1]);
+
+  // edge dashes
+  ctx.fillStyle = cc[0];
+  const dashes = 8;
+  for (let i = 0; i < dashes; i++) {
+    const a = i / dashes * Math.PI * 2;
+    const dx = Math.round(cx + Math.cos(a) * (r - 3));
+    const dy = Math.round(cy + Math.sin(a) * (r - 3));
+    ctx.fillRect(dx - 2, dy - 2, 4, 4);
+  }
+  pixelCircle(ctx, cx, cy, r - 6, cc[2]);
+  pixelCircle(ctx, cx, cy, r - 8, cc[1]);
+
+  // value
+  const label = val >= 1000 ? (val / 1000) + 'K' : String(val);
+  ctx.font = 'bold ' + Math.max(9, Math.floor(r * 0.72)) + 'px ui-monospace, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillText(label, cx + 1, cy + 1);
+  ctx.fillStyle = key === 5 ? '#3a3a4a' : '#ffffff';
+  ctx.fillText(label, cx, cy);
+  ctx.textBaseline = 'alphabetic';
+
+  ctx.globalAlpha = 1;
+}
+
+function drawRightPanel() {
+  const x = 702, y = 66, w = 246, h = 442;
+
+  ctx.fillStyle = '#080e18';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#16202e';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+
+  // header
+  ctx.fillStyle = 'rgba(80,240,140,0.08)';
+  ctx.fillRect(x + 2, y + 2, w - 4, 28);
+  txtS('ЧАТ СТОЛА', x + 12, y + 22, 14, '#4be0a8');
+
+  // chat messages
+  let cy = y + 48;
+  for (let i = 0; i < G.chat.length; i++) {
+    const c = G.chat[i];
+    if (c.delay > 0) continue;
+    const a = Math.min(1, c.life * 3) * Math.min(1, (11 - c.life) * 1.2);
+    ctx.globalAlpha = Math.max(0, a);
+
+    const line = c.who ? (c.who + ': ' + c.text) : c.text;
+    ctx.font = '13px ui-monospace, monospace';
+    const maxW = w - 24;
+    let words = line.split(' ');
+    let cur = '';
+    const lines = [];
+    for (let wi = 0; wi < words.length; wi++) {
+      const test = cur ? cur + ' ' + words[wi] : words[wi];
+      if (ctx.measureText(test).width > maxW && cur) {
+        lines.push(cur);
+        cur = words[wi];
+      } else {
+        cur = test;
+      }
+    }
+    if (cur) lines.push(cur);
+
+    for (let li = 0; li < lines.length; li++) {
+      const col = c.who ? '#7ad3ff' : 'rgba(200,220,240,0.78)';
+      ctx.fillStyle = col;
+      ctx.textAlign = 'left';
+      ctx.fillText(lines[li], x + 12, cy);
+      cy += 17;
+    }
+    cy += 5;
+    if (cy > y + h - 130) break;
+    ctx.globalAlpha = 1;
+  }
+  ctx.globalAlpha = 1;
+
+  // separator
+  ctx.fillStyle = '#16202e';
+  ctx.fillRect(x + 8, y + h - 118, w - 16, 2);
+
+  // players online
+  txtS('ИГРОКИ ЗА СТОЛОМ', x + 12, y + h - 96, 13, '#4be0a8');
+
+  let py = y + h - 76;
+  // you
+  drawPlayerRow(x + 12, py, 'ВЫ', G.balance, '#ffd93d', true);
+  py += 30;
+  for (let i = 0; i < G.bots.length; i++) {
+    drawPlayerRow(x + 12, py, G.bots[i].name, G.bots[i].balance, '#7ad3ff', false);
+    py += 30;
+  }
+}
+
+function drawPlayerRow(x, y, name, bal, col, isYou) {
+  ctx.fillStyle = isYou ? 'rgba(255,217,61,0.10)' : 'rgba(255,255,255,0.035)';
+  ctx.fillRect(x, y, 222, 26);
+  if (isYou) {
+    ctx.fillStyle = '#ffd93d';
+    ctx.fillRect(x, y, 3, 26);
+  }
+  // dot
+  ctx.fillStyle = col;
+  ctx.fillRect(x + 10, y + 10, 6, 6);
+  txt(name, x + 24, y + 18, 12, isYou ? '#ffd93d' : 'rgba(200,220,240,0.8)');
+  txt('₡ ' + bal, x + 214, y + 18, 12, 'rgba(255,217,61,0.8)', 'right');
+}
+
+function drawButtons() {
+  const btns = currentButtons();
+  const mx = G.mouse.x, my = G.mouse.y;
+
+  for (let i = 0; i < btns.length; i++) {
+    const b = btns[i];
+    const hov = mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h;
+    const dis = b.enabled === false;
+
+    if (b.kind === 'chip') {
+      // chip button
+      const cx = b.x + b.w / 2;
+      const cy = b.y + b.h / 2;
+      const r = 28 + (hov && !dis ? 2 : 0);
+
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+
+      drawChip(cx, cy, r, b.val, dis ? 0.4 : 1);
+
+      if (hov && !dis) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
+      }
+      continue;
+    }
+
+    // regular button
+    let fill, border, textCol;
+    if (dis) {
+      fill = 'rgba(30,36,48,0.7)';
+      border = 'rgba(80,90,110,0.5)';
+      textCol = 'rgba(150,160,180,0.5)';
+    } else if (b.kind === 'primary') {
+      fill = hov ? 'rgba(40,150,95,0.95)' : 'rgba(28,110,72,0.92)';
+      border = hov ? '#8ef0c8' : '#3fbf85';
+      textCol = '#ffffff';
+    } else {
+      fill = hov ? 'rgba(50,62,84,0.95)' : 'rgba(34,44,62,0.9)';
+      border = hov ? 'rgba(160,190,230,0.8)' : 'rgba(90,110,140,0.6)';
+      textCol = '#d8e4f4';
+    }
+
+    ctx.fillStyle = fill;
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+
+    // pixel corner notches
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(b.x, b.y, 5, 5);
+    ctx.fillRect(b.x + b.w - 5, b.y, 5, 5);
+    ctx.fillRect(b.x, b.y + b.h - 5, 5, 5);
+    ctx.fillRect(b.x + b.w - 5, b.y + b.h - 5, 5, 5);
+
+    ctx.strokeStyle = border;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
+
+    // top highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    ctx.fillRect(b.x + 3, b.y + 3, b.w - 6, 3);
+
+    txtS(b.label, b.x + b.w / 2, b.y + b.h / 2 + 9, b.kind === 'primary' ? 20 : 19, textCol, 'center');
+
+    // hotkey hint
+    if (!dis) {
+      let hint = '';
+      if (b.id === 'hit') hint = '[H]';
+      else if (b.id === 'stand') hint = '[S]';
+      else if (b.id === 'double') hint = '[D]';
+      else if (b.id === 'deal') hint = '[ENTER]';
+      if (hint) txt(hint, b.x + b.w / 2, b.y + b.h - 6, 10, 'rgba(255,255,255,0.35)', 'center');
+    }
+  }
+}
+
+function drawBetDisplay() {
+  if (G.phase !== 'bet') return;
+
+  const y = 462;
+
+  // bet area on the table
+  ctx.fillStyle = 'rgba(0,0,0,0.32)';
+  ctx.fillRect(TABLE_CX - 90, y - 34, 180, 60);
+  ctx.strokeStyle = 'rgba(255,217,61,0.45)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(TABLE_CX - 90, y - 34, 180, 60);
+
+  txt('СТАВКА', TABLE_CX, y - 16, 13, 'rgba(255,255,255,0.5)', 'center');
+
+  if (G.bet > 0) {
+    txtS('₡ ' + G.bet, TABLE_CX, y + 18, 26, '#ffd93d', 'center');
+
+    // chip stack
+    const stack = [];
+    let rem = G.bet;
+    const denoms = [500, 100, 25, 5];
+    for (let i = 0; i < denoms.length && rem > 0; i++) {
+      while (rem >= denoms[i] && stack.length < 6) {
+        stack.push(denoms[i]);
+        rem -= denoms[i];
+      }
+    }
+    for (let i = 0; i < stack.length; i++) {
+      drawChip(TABLE_CX - 62, y + 12 - i * 5, 14, stack[i], 1);
+    }
+  } else {
+    txt('ВЫБЕРИТЕ ФИШКИ', TABLE_CX, y + 14, 16, 'rgba(255,255,255,0.35)', 'center');
+  }
+
+  // balance
+  txt('БАЛАНС', 60, y - 16, 13, 'rgba(255,255,255,0.45)');
+  txtS('₡ ' + G.balance, 60, y + 18, 26, '#4be0a8');
+
+  // stats
+  txt('ПОБЕД ' + G.stats.win + ' · БЛЕКДЖЕКОВ ' + G.stats.bj, 662, y - 16, 12, 'rgba(255,255,255,0.35)', 'right');
+  txt('НИЧЬИХ ' + G.stats.push + ' · ПОРАЖЕНИЙ ' + G.stats.lose, 662, y + 4, 12, 'rgba(255,255,255,0.35)', 'right');
+}
+
+function drawCenterMessage() {
+  if (!G.msg) return;
+
+  const y = 268;
+  const pulse = 1 + Math.sin(performance.now() / 160) * 0.03;
+
+  ctx.save();
+  ctx.translate(TABLE_CX, y);
+  ctx.scale(pulse, pulse);
+
+  ctx.font = 'bold 46px ui-monospace, "Courier New", monospace';
+  ctx.textAlign = 'center';
+  const tw = ctx.measureText(G.msg).width;
+
+  ctx.fillStyle = 'rgba(6,12,18,0.72)';
+  ctx.fillRect(-tw / 2 - 30, -40, tw + 60, 62);
+  ctx.strokeStyle = G.msgCol;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(-tw / 2 - 30, -40, tw + 60, 62);
+
+  ctx.fillStyle = 'rgba(0,0,0,0.8)';
+  ctx.fillText(G.msg, 2, 4);
+  ctx.fillStyle = G.msgCol;
+  ctx.fillText(G.msg, 0, 2);
+
+  ctx.restore();
+
+  if (G.subMsg) {
+    txt(G.subMsg, TABLE_CX, y + 48, 14, 'rgba(255,255,255,0.55)', 'center');
+  }
+
+  if (G.net !== 0 && G.phase === 'result') {
+    const netTxt = (G.net > 0 ? '+' : '') + G.net;
+    txtS(netTxt, TABLE_CX, y + 76, 22, G.net > 0 ? '#4be0a8' : '#ff4b6b', 'center');
+  }
+}
+
+function drawLabels() {
+  // dealer label
+  ctx.fillStyle = 'rgba(80,240,140,0.10)';
+  ctx.fillRect(TABLE_CX - 60, 76, 120, 22);
+  ctx.strokeStyle = 'rgba(80,240,140,0.3)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(TABLE_CX - 60, 76, 120, 22);
+  txt('ДИЛЕР', TABLE_CX, 92, 14, '#4be0a8', 'center');
+
+  // player label
+  const active = G.phase === 'player';
+  const pulse = active ? 0.15 + 0.15 * Math.sin(performance.now() / 260) : 0.06;
+  ctx.fillStyle = 'rgba(255,217,61,' + pulse + ')';
+  ctx.fillRect(TABLE_CX - 60, 340, 120, 22);
+  ctx.strokeStyle = active ? 'rgba(255,217,61,0.85)' : 'rgba(255,217,61,0.25)';
+  ctx.lineWidth = active ? 2 : 1;
+  ctx.strokeRect(TABLE_CX - 60, 340, 120, 22);
+  txt('ВЫ', TABLE_CX, 356, 14, active ? '#ffd93d' : 'rgba(255,217,61,0.6)', 'center');
+}
+
+function drawStreakIndicator() {
+  // "ход" indicator under the player label
+  if (G.phase === 'player') {
+    const a = 0.5 + 0.5 * Math.sin(performance.now() / 240);
+    ctx.globalAlpha = a;
+    txt('▶ ВАШ ХОД ◀', TABLE_CX, 380, 14, '#8ef0c8', 'center');
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* ---------- MAIN RENDER ---------- */
+function render() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  if (!G) return;
+
+  // shake
+  if (G.shake > 0.4) {
+    ctx.translate((Math.random() - 0.5) * G.shake, (Math.random() - 0.5) * G.shake);
+  }
+
+  // base background
+  ctx.fillStyle = '#05070c';
+  ctx.fillRect(-40, -40, W + 80, H + 80);
+
+  drawTableFelt();
+  drawShoe();
+  drawLabels();
+
+  // bots
+  drawBot(G.bots[0]);
+  drawBot(G.bots[1]);
+
+  // dealer cards
+  const dealerHideHole = (G.phase === 'deal' || G.phase === 'player' || (G.phase === 'bet'));
+  renderHand(G.dealer, TABLE_CX, 104, 1, dealerHideHole, G.phase === 'dealer');
+
+  // dealer value badge
+  if (G.dealer.length > 0) {
+    const dv = dealerHideHole ? visibleValue(G.dealer) : handValue(G.dealer);
+    const soft = dealerHideHole ? isSoft(G.dealer.filter(function (c) { return !c.down; })) : isSoft(G.dealer);
+    drawValueBadge(TABLE_CX, 234, dv, soft, false, '');
+  }
+
+  // player cards
+  renderHand(G.player, TABLE_CX, 372, 1, false, G.phase === 'dealer' || G.phase === 'result');
+
+  // player value badge
+  if (G.player.length > 0) {
+    const pv = handValue(G.player);
+    const soft = isSoft(G.player);
+    drawValueBadge(TABLE_CX, 500, pv, soft, G.phase === 'player', '');
+  }
+
+  // chip fly animation
+  for (let i = 0; i < G.chipFly.length; i++) {
+    const cf = G.chipFly[i];
+    const x = cf.x + (cf.x - cf.x) * 0;
+    const y = 505 - cf.t * 20;
+    drawChip(cf.x + Math.sin(cf.t * Math.PI) * 30, y, 16, cf.v, 1 - cf.t * 0.5);
+  }
+
+  drawBetDisplay();
+  drawCenterMessage();
+  drawStreakIndicator();
+  drawButtons();
+  drawRightPanel();
+  drawTopBar();
+
+  // win flash
+  if (G.winFlash > 0) {
+    ctx.fillStyle = 'rgba(255,217,61,' + (G.winFlash * 0.16) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
+  if (G.flash > 0) {
+    ctx.fillStyle = 'rgba(255,255,255,' + (G.flash * 0.2) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // vignette
+  const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.40, W / 2, H / 2, H * 1.0);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
+}
+
+/* =========================================================
+   12. LOOP
+   ========================================================= */
+resetGame();
+let last = performance.now();
+
+function loop(now) {
+  let dt = (now - last) / 1000;
+  last = now;
+  if (dt > 0.05) dt = 0.05;
+  if (dt < 0) dt = 0;
+
+  update(dt);
+  render();
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+<a href="../index.html" class="gm-back" aria-label="Назад в меню">&larr; МЕНЮ</a>
+<style>.gm-back{position:fixed;top:10px;left:10px;z-index:9999;font:bold 12px/1 ui-monospace,"Courier New",monospace;letter-spacing:.08em;color:#fff;text-decoration:none;background:rgba(0,0,0,.55);border:2px solid rgba(255,255,255,.25);padding:8px 10px;border-radius:4px;opacity:.55;transition:opacity .15s,border-color .15s}.gm-back:hover,.gm-back:focus-visible{opacity:1;border-color:#ffd93d;outline:none}</style>
+</body>
+</html>

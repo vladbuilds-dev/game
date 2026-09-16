@@ -1,0 +1,1276 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>БЛОК БЛАСТ · пиксельная головоломка</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body{
+    width:100%; height:100%;
+    background:#05070d;
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
+    touch-action:none;
+    font-family: ui-monospace, "Courier New", monospace;
+  }
+  canvas{
+    display:block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    width: min(100vw, 72vh);
+    height: auto;
+    aspect-ratio: 720 / 960;
+    box-shadow: 0 0 100px rgba(80,140,255,.16), 0 0 0 2px #10141f;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<canvas id="c" width="720" height="960"></canvas>
+<script>
+"use strict";
+
+/* =========================================================
+   БЛОК БЛАСТ — 8×8 пиксельная головоломка
+   ========================================================= */
+
+const cvs = document.getElementById('c');
+const ctx = cvs.getContext('2d');
+const W = 720, H = 960;
+ctx.imageSmoothingEnabled = false;
+
+/* ---------- GRID GEOMETRY ---------- */
+const GRID = 8;
+const CELL = 68;
+const GAP = 4;
+const PITCH = CELL + GAP;               // 72
+const GRID_PX = GRID * PITCH - GAP;     // 572
+const GRID_X = (W - GRID_PX) / 2;       // 74
+const GRID_Y = 148;
+
+const TRAY_Y = 754;
+const TRAY_H = 196;
+const TRAY_SCALE = 0.62;
+const TR_PITCH = PITCH * TRAY_SCALE;
+const TR_CELL = CELL * TRAY_SCALE;
+
+/* ---------- PALETTES ---------- */
+const PALETTES = [
+  { light: '#ffb0b0', main: '#ff5b5b', dark: '#a82020' }, // red
+  { light: '#b0eaa8', main: '#4cd964', dark: '#1a7a2a' }, // green
+  { light: '#a8d2ff', main: '#4d9fff', dark: '#155a9f' }, // blue
+  { light: '#ffe888', main: '#fcc419', dark: '#a07a00' }, // yellow
+  { light: '#d0b8ff', main: '#9775fa', dark: '#4a2fa0' }, // purple
+  { light: '#ffc8a0', main: '#ff8a3d', dark: '#a04800' }, // orange
+  { light: '#a8f0f0', main: '#22b8cf', dark: '#0a5a6e' }, // cyan
+  { light: '#ffb0d8', main: '#f06595', dark: '#9f1a4d' }, // pink
+];
+
+/* ---------- SHAPES ---------- */
+const SHAPES = [
+  // single
+  [[1]],
+  // lines
+  [[1,1]], [[1],[1]],
+  [[1,1,1]], [[1],[1],[1]],
+  [[1,1,1,1]], [[1],[1],[1],[1]],
+  [[1,1,1,1,1]], [[1],[1],[1],[1],[1]],
+  // squares
+  [[1,1],[1,1]],
+  [[1,1,1],[1,1,1],[1,1,1]],
+  // 2x2 corners (3 cells)
+  [[1,1],[1,0]], [[1,1],[0,1]],
+  [[1,0],[1,1]], [[0,1],[1,1]],
+  // 3x3 L corners (5 cells)
+  [[1,0,0],[1,0,0],[1,1,1]],
+  [[1,1,1],[1,0,0],[1,0,0]],
+  [[1,1,1],[0,0,1],[0,0,1]],
+  [[0,0,1],[0,0,1],[1,1,1]],
+  // 2x3 / 3x2 L shapes (4 cells)
+  [[1,0],[1,0],[1,1]],
+  [[1,1],[0,1],[0,1]],
+  [[0,1],[0,1],[1,1]],
+  [[1,1],[1,0],[1,0]],
+  [[1,0,0],[1,1,1]],
+  [[1,1,1],[1,0,0]],
+  [[1,1,1],[0,0,1]],
+  [[0,0,1],[1,1,1]],
+  // T shapes
+  [[1,1,1],[0,1,0]],
+  [[0,1,0],[1,1,1]],
+  [[1,0],[1,1],[1,0]],
+  [[0,1],[1,1],[0,1]],
+  // S / Z
+  [[0,1,1],[1,1,0]],
+  [[1,1,0],[0,1,1]],
+  [[1,0],[1,1],[0,1]],
+  [[0,1],[1,1],[1,0]],
+  // plus
+  [[0,1,0],[1,1,1],[0,1,0]],
+];
+
+/* ---------- AUDIO ---------- */
+let actx = null;
+function AC() {
+  if (!actx) {
+    try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; }
+  }
+  return actx;
+}
+function beep(f0, f1, dur, vol, type, delay) {
+  const a = AC(); if (!a) return;
+  try {
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = type || 'square';
+    const t = a.currentTime + (delay || 0);
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+    o.connect(g); g.connect(a.destination);
+    o.start(t); o.stop(t + dur + 0.03);
+  } catch (e) {}
+}
+function noiseHit(dur, vol, hp) {
+  const a = AC(); if (!a) return;
+  try {
+    const n = Math.floor(a.sampleRate * dur);
+    const buf = a.createBuffer(1, n, a.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2.2);
+    const src = a.createBufferSource();
+    src.buffer = buf;
+    const f = a.createBiquadFilter();
+    f.type = 'highpass';
+    f.frequency.value = hp || 1200;
+    const g = a.createGain();
+    g.gain.value = vol;
+    src.connect(f); f.connect(g); g.connect(a.destination);
+    src.start();
+  } catch (e) {}
+}
+const sfx = {
+  pickup() { beep(700, 1100, 0.06, 0.035, 'square'); },
+  place()  { noiseHit(0.06, 0.09, 800); beep(260, 180, 0.09, 0.035, 'square'); },
+  wrong()  { beep(220, 140, 0.14, 0.045, 'sawtooth'); },
+  clear(n) {
+    const base = [660, 880, 1100, 1320, 1760, 2200];
+    for (let i = 0; i < Math.min(n + 1, 6); i++) {
+      beep(base[i], base[i] * 1.4, 0.09, 0.05, 'square', i * 0.055);
+    }
+  },
+  combo(n) {
+    beep(880 + n * 100, 1400 + n * 100, 0.1, 0.05, 'square');
+    beep(1320 + n * 100, 1900 + n * 100, 0.14, 0.05, 'square', 0.1);
+  },
+  gameover() {
+    beep(400, 320, 0.18, 0.05, 'sawtooth');
+    beep(300, 240, 0.18, 0.05, 'sawtooth', 0.16);
+    beep(200, 120, 0.4, 0.06, 'sawtooth', 0.32);
+  },
+  bonus() {
+    beep(880, 1320, 0.1, 0.05, 'square');
+    beep(1320, 1760, 0.16, 0.05, 'square', 0.1);
+  }
+};
+
+/* ---------- STATE ---------- */
+const LINE_SCORES = [0, 10, 30, 60, 100, 150, 210, 280, 360, 450];
+
+let G = {
+  state: 'start',   // 'start' | 'playing' | 'gameover'
+  grid: [],
+  tray: [null, null, null],
+  score: 0,
+  scoreDisplay: 0,
+  best: 0,
+  combo: 1,
+  comboAnim: 0,
+  linesCleared: 0,
+  piecesPlaced: 0,
+  drag: null,
+  hoverSlot: -1,
+  particles: [],
+  popups: [],
+  clearAnims: [],
+  flash: 0,
+  shake: 0,
+  startedAt: 0,
+  gameOverTimer: 0,
+  pulseT: 0
+};
+
+try { G.best = parseInt(localStorage.getItem('blockblast_best') || '0', 10) || 0; } catch (e) { G.best = 0; }
+
+/* ---------- INIT ---------- */
+function newGrid() {
+  G.grid = [];
+  for (let r = 0; r < GRID; r++) G.grid.push(new Array(GRID).fill(null));
+}
+
+function makePiece(shape) {
+  const h = shape.length;
+  const w = shape[0].length;
+  const cells = [];
+  for (let r = 0; r < h; r++) {
+    for (let c = 0; c < w; c++) {
+      if (shape[r][c]) cells.push([r, c]);
+    }
+  }
+  return {
+    w, h, cells,
+    colorIdx: (Math.random() * PALETTES.length) | 0,
+    shape: shape,
+    bobPhase: Math.random() * 6.28
+  };
+}
+
+function randomPiece() {
+  const s = SHAPES[(Math.random() * SHAPES.length) | 0];
+  return makePiece(s);
+}
+
+function fillTray() {
+  G.tray = [randomPiece(), randomPiece(), randomPiece()];
+  for (let i = 0; i < 3; i++) G.tray[i].bobPhase = Math.random() * 6.28;
+}
+
+function startGame() {
+  newGrid();
+  G.score = 0;
+  G.scoreDisplay = 0;
+  G.combo = 1;
+  G.comboAnim = 0;
+  G.linesCleared = 0;
+  G.piecesPlaced = 0;
+  G.drag = null;
+  G.hoverSlot = -1;
+  G.particles = [];
+  G.popups = [];
+  G.clearAnims = [];
+  G.flash = 0;
+  G.shake = 0;
+  G.state = 'playing';
+  G.startedAt = performance.now();
+  fillTray();
+  AC();
+}
+
+/* ---------- LOGIC ---------- */
+function canPlace(piece, r0, c0) {
+  for (let i = 0; i < piece.cells.length; i++) {
+    const [r, c] = piece.cells[i];
+    const rr = r0 + r, cc = c0 + c;
+    if (rr < 0 || rr >= GRID || cc < 0 || cc >= GRID) return false;
+    if (G.grid[rr][cc] !== null) return false;
+  }
+  return true;
+}
+
+function placePiece(piece, r0, c0) {
+  for (let i = 0; i < piece.cells.length; i++) {
+    const [r, c] = piece.cells[i];
+    G.grid[r0 + r][c0 + c] = { pal: piece.colorIdx };
+  }
+}
+
+function findFullLines() {
+  const rows = [], cols = [];
+  for (let r = 0; r < GRID; r++) {
+    let full = true;
+    for (let c = 0; c < GRID; c++) if (G.grid[r][c] === null) { full = false; break; }
+    if (full) rows.push(r);
+  }
+  for (let c = 0; c < GRID; c++) {
+    let full = true;
+    for (let r = 0; r < GRID; r++) if (G.grid[r][c] === null) { full = false; break; }
+    if (full) cols.push(c);
+  }
+  return { rows, cols };
+}
+
+function clearLines(rows, cols) {
+  const seen = new Set();
+  const cells = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    for (let c = 0; c < GRID; c++) {
+      const k = r * GRID + c;
+      if (!seen.has(k)) { seen.add(k); cells.push({ r, c, pal: G.grid[r][c].pal }); }
+    }
+  }
+  for (let i = 0; i < cols.length; i++) {
+    const c = cols[i];
+    for (let r = 0; r < GRID; r++) {
+      const k = r * GRID + c;
+      if (!seen.has(k)) { seen.add(k); cells.push({ r, c, pal: G.grid[r][c].pal }); }
+    }
+  }
+  for (let i = 0; i < cells.length; i++) {
+    G.grid[cells[i].r][cells[i].c] = null;
+  }
+  G.clearAnims.push({ cells, t: 0, dur: 0.34 });
+  for (let i = 0; i < cells.length; i++) {
+    spawnParticles(cells[i].r, cells[i].c, cells[i].pal);
+  }
+  return cells.length;
+}
+
+function spawnParticles(r, c, palIdx) {
+  const pal = PALETTES[palIdx];
+  const cellX = GRID_X + c * PITCH + CELL / 2;
+  const cellY = GRID_Y + r * PITCH + CELL / 2;
+  const n = 5;
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 90 + Math.random() * 220;
+    G.particles.push({
+      x: cellX + (Math.random() - 0.5) * 20,
+      y: cellY + (Math.random() - 0.5) * 20,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp - 80,
+      g: 340,
+      life: 0.5 + Math.random() * 0.5,
+      max: 1.0,
+      sz: 3 + Math.random() * 5,
+      col: [pal.light, pal.main, pal.dark, '#ffffff'][(Math.random() * 4) | 0]
+    });
+  }
+}
+
+function hasAnyMove() {
+  for (let i = 0; i < 3; i++) {
+    const p = G.tray[i];
+    if (!p) continue;
+    for (let r = 0; r <= GRID - p.h; r++) {
+      for (let c = 0; c <= GRID - p.w; c++) {
+        if (canPlace(p, r, c)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function checkGameOver() {
+  if (!hasAnyMove()) {
+    G.state = 'gameover';
+    G.gameOverTimer = 0;
+    G.shake = 14;
+    sfx.gameover();
+    if (G.score > G.best) {
+      G.best = G.score;
+      try { localStorage.setItem('blockblast_best', String(G.best)); } catch (e) {}
+    }
+  }
+}
+
+/* ---------- TRAY GEOMETRY ---------- */
+function trayPieceBounds(piece, slotIdx) {
+  const pw = piece.w * TR_PITCH - GAP * TRAY_SCALE;
+  const ph = piece.h * TR_PITCH - GAP * TRAY_SCALE;
+  const slotCx = W * (slotIdx + 0.5) / 3;
+  const slotCy = TRAY_Y + TRAY_H / 2;
+  return {
+    x: slotCx - pw / 2,
+    y: slotCy - ph / 2,
+    w: pw,
+    h: ph
+  };
+}
+
+/* ---------- DRAG ---------- */
+function startDrag(piece, trayIdx, x, y) {
+  const b = trayPieceBounds(piece, trayIdx);
+
+  const relX = (x - b.x) / TR_PITCH;
+  const relY = (y - b.y) / TR_PITCH;
+  let grabR = 0, grabC = 0, bestD = 1e9;
+  for (let i = 0; i < piece.cells.length; i++) {
+    const [r, c] = piece.cells[i];
+    const dx = relX - (c + 0.5);
+    const dy = relY - (r + 0.5);
+    const d = dx * dx + dy * dy;
+    if (d < bestD) { bestD = d; grabR = r; grabC = c; }
+  }
+
+  const offsetX = -grabC * PITCH - CELL / 2;
+  const offsetY = -grabR * PITCH - CELL / 2;
+
+  G.drag = {
+    piece, trayIdx, grabR, grabC,
+    offsetX, offsetY,
+    px: x, py: y,
+    gx: x + offsetX,
+    gy: y + offsetY,
+    hasSnap: false,
+    snapR: 0, snapC: 0,
+    valid: false,
+    liftT: 0
+  };
+  G.hoverSlot = -1;
+  sfx.pickup();
+}
+
+function updateDrag(x, y) {
+  const d = G.drag;
+  if (!d) return;
+  d.px = x; d.py = y;
+
+  const rawX = x + d.offsetX;
+  const rawY = y + d.offsetY;
+
+  const cc = Math.round((rawX - GRID_X) / PITCH);
+  const rr = Math.round((rawY - GRID_Y) / PITCH);
+
+  const snapX = GRID_X + cc * PITCH;
+  const snapY = GRID_Y + rr * PITCH;
+
+  const nearX = Math.abs(rawX - snapX) < PITCH * 0.55;
+  const nearY = Math.abs(rawY - snapY) < PITCH * 0.55;
+
+  const fitsInBounds = rr >= 0 && cc >= 0 && rr + d.piece.h <= GRID && cc + d.piece.w <= GRID;
+
+  if (nearX && nearY && fitsInBounds) {
+    d.gx = snapX;
+    d.gy = snapY;
+    d.snapR = rr;
+    d.snapC = cc;
+    d.hasSnap = true;
+    d.valid = canPlace(d.piece, rr, cc);
+  } else {
+    d.gx = rawX;
+    d.gy = rawY;
+    d.hasSnap = false;
+    d.valid = false;
+  }
+}
+
+function endDrag() {
+  const d = G.drag;
+  if (!d) return;
+  G.drag = null;
+
+  if (d.hasSnap && d.valid) {
+    placePiece(d.piece, d.snapR, d.snapC);
+    G.tray[d.trayIdx] = null;
+    G.piecesPlaced++;
+    sfx.place();
+
+    // small placement particles
+    for (let i = 0; i < d.piece.cells.length; i++) {
+      const [r, c] = d.piece.cells[i];
+      spawnParticles(d.snapR + r, d.snapC + c, d.piece.colorIdx);
+    }
+
+    // points for placing
+    G.score += d.piece.cells.length;
+
+    // check lines
+    const fl = findFullLines();
+    const total = fl.rows.length + fl.cols.length;
+
+    if (total > 0) {
+      const cleared = clearLines(fl.rows, fl.cols);
+      G.linesCleared += total;
+      G.flash = Math.min(1, 0.4 + total * 0.14);
+      G.shake = Math.min(14, 4 + total * 3);
+
+      const base = LINE_SCORES[Math.min(total, LINE_SCORES.length - 1)];
+      const pts = base * G.combo;
+      G.score += pts;
+
+      sfx.clear(total);
+
+      if (G.combo > 1) {
+        sfx.combo(G.combo);
+        G.comboAnim = 1.4;
+      }
+
+      // popup
+      let label = '';
+      if (total === 1) label = '+ ' + pts;
+      else if (total === 2) label = 'ДВОЙНОЙ + ' + pts;
+      else if (total === 3) label = 'ТРОЙНОЙ + ' + pts;
+      else if (total === 4) label = 'БЛОК-БЛАСТ! + ' + pts;
+      else label = 'МЕГА! + ' + pts;
+
+      G.popups.push({
+        text: label,
+        x: GRID_X + GRID_PX / 2,
+        y: GRID_Y + GRID_PX / 2 - 20,
+        t: 0, dur: 1.5,
+        col: total >= 3 ? '#ffd93d' : '#8ef0c8',
+        size: total >= 3 ? 40 : 34,
+        vy: -60
+      });
+
+      if (G.combo > 1) {
+        G.popups.push({
+          text: 'КОМБО x' + G.combo,
+          x: GRID_X + GRID_PX / 2,
+          y: GRID_Y + GRID_PX / 2 + 36,
+          t: 0, dur: 1.5,
+          col: '#ff9bb8',
+          size: 28,
+          vy: -50
+        });
+      }
+
+      G.combo++;
+    } else {
+      G.combo = 1;
+    }
+
+    // refill tray if empty
+    if (G.tray[0] === null && G.tray[1] === null && G.tray[2] === null) {
+      fillTray();
+    }
+
+    // game over check
+    checkGameOver();
+  } else {
+    // invalid — return
+    sfx.wrong();
+  }
+}
+
+/* ---------- INPUT ---------- */
+function canvasPos(clientX, clientY) {
+  const r = cvs.getBoundingClientRect();
+  return {
+    x: (clientX - r.left) / r.width * W,
+    y: (clientY - r.top) / r.height * H
+  };
+}
+
+function onDown(x, y) {
+  AC();
+  if (G.state === 'start' || G.state === 'gameover') {
+    if (G.state === 'gameover' && G.gameOverTimer < 0.5) return;
+    startGame();
+    return;
+  }
+  if (G.drag) return;
+  for (let i = 0; i < 3; i++) {
+    const p = G.tray[i];
+    if (!p) continue;
+    const b = trayPieceBounds(p, i);
+    if (x >= b.x - 12 && x <= b.x + b.w + 12 && y >= b.y - 12 && y <= b.y + b.h + 12) {
+      startDrag(p, i, x, y);
+      return;
+    }
+  }
+}
+
+function onMove(x, y) {
+  if (G.drag) {
+    updateDrag(x, y);
+  } else if (G.state === 'playing') {
+    G.hoverSlot = -1;
+    for (let i = 0; i < 3; i++) {
+      const p = G.tray[i];
+      if (!p) continue;
+      const b = trayPieceBounds(p, i);
+      if (x >= b.x - 12 && x <= b.x + b.w + 12 && y >= b.y - 12 && y <= b.y + b.h + 12) {
+        G.hoverSlot = i;
+        break;
+      }
+    }
+  }
+}
+
+function onUp() {
+  if (G.drag) endDrag();
+}
+
+cvs.addEventListener('mousedown', function (e) {
+  e.preventDefault();
+  const p = canvasPos(e.clientX, e.clientY);
+  onDown(p.x, p.y);
+});
+cvs.addEventListener('mousemove', function (e) {
+  const p = canvasPos(e.clientX, e.clientY);
+  onMove(p.x, p.y);
+});
+window.addEventListener('mouseup', function () { onUp(); });
+cvs.addEventListener('mouseleave', function () {
+  G.hoverSlot = -1;
+});
+
+cvs.addEventListener('touchstart', function (e) {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  const p = canvasPos(t.clientX, t.clientY);
+  onDown(p.x, p.y);
+}, { passive: false });
+cvs.addEventListener('touchmove', function (e) {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  const p = canvasPos(t.clientX, t.clientY);
+  onMove(p.x, p.y);
+}, { passive: false });
+cvs.addEventListener('touchend', function (e) {
+  e.preventDefault();
+  onUp();
+}, { passive: false });
+cvs.addEventListener('touchcancel', function (e) {
+  e.preventDefault();
+  onUp();
+}, { passive: false });
+
+window.addEventListener('keydown', function (e) {
+  if (e.key === ' ' || e.key === 'Enter') {
+    e.preventDefault();
+    if (G.state === 'start' || G.state === 'gameover') startGame();
+  }
+  if (e.key === 'Escape' && G.drag) {
+    G.drag = null;
+  }
+});
+
+/* ---------- UPDATE ---------- */
+function update(dt) {
+  G.pulseT += dt;
+
+  // score lerp
+  if (G.scoreDisplay < G.score) {
+    G.scoreDisplay += Math.max(1, (G.score - G.scoreDisplay) * dt * 8);
+    if (G.scoreDisplay > G.score) G.scoreDisplay = G.score;
+  } else if (G.scoreDisplay > G.score) {
+    G.scoreDisplay = G.score;
+  }
+
+  // drag lift animation
+  if (G.drag) G.drag.liftT = Math.min(1, G.drag.liftT + dt * 8);
+
+  // particles
+  for (let i = G.particles.length - 1; i >= 0; i--) {
+    const p = G.particles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += p.g * dt;
+    p.vx *= Math.exp(-1.6 * dt);
+    p.life -= dt;
+    if (p.life <= 0) G.particles.splice(i, 1);
+  }
+
+  // popups
+  for (let i = G.popups.length - 1; i >= 0; i--) {
+    const p = G.popups[i];
+    p.t += dt;
+    p.y += p.vy * dt;
+    p.vy *= Math.exp(-1.6 * dt);
+    if (p.t > p.dur) G.popups.splice(i, 1);
+  }
+
+  // clear anims
+  for (let i = G.clearAnims.length - 1; i >= 0; i--) {
+    const a = G.clearAnims[i];
+    a.t += dt;
+    if (a.t > a.dur) G.clearAnims.splice(i, 1);
+  }
+
+  // combo anim
+  if (G.comboAnim > 0) G.comboAnim = Math.max(0, G.comboAnim - dt * 1.6);
+
+  // flash / shake
+  G.flash = Math.max(0, G.flash - dt * 2.6);
+  G.shake = Math.max(0, G.shake - dt * 42);
+
+  // game over delay
+  if (G.state === 'gameover') {
+    G.gameOverTimer += dt;
+  }
+}
+
+/* ---------- RENDER HELPERS ---------- */
+function drawBlockPx(x, y, size, pal, alpha) {
+  if (alpha === undefined) alpha = 1;
+  if (alpha <= 0.01) return;
+  ctx.globalAlpha = alpha;
+
+  // outline / dark base
+  ctx.fillStyle = pal.dark;
+  ctx.fillRect(x, y, size, size);
+
+  // main fill
+  ctx.fillStyle = pal.main;
+  ctx.fillRect(x + 2, y + 2, size - 4, size - 4);
+
+  // top + left highlight
+  ctx.fillStyle = pal.light;
+  ctx.fillRect(x + 2, y + 2, size - 4, 4);
+  ctx.fillRect(x + 2, y + 2, 4, size - 4);
+
+  // bottom + right shadow
+  ctx.fillStyle = pal.dark;
+  ctx.fillRect(x + 2, y + size - 6, size - 4, 4);
+  ctx.fillRect(x + size - 6, y + 2, 4, size - 4);
+
+  // inner glint
+  ctx.fillStyle = pal.light;
+  ctx.fillRect(x + 8, y + 8, 5, 5);
+
+  // corner dark pixel
+  ctx.fillStyle = pal.dark;
+  ctx.fillRect(x + size - 13, y + size - 13, 4, 4);
+
+  ctx.globalAlpha = 1;
+}
+
+function drawEmptyCell(x, y, size) {
+  ctx.fillStyle = '#141a28';
+  ctx.fillRect(x, y, size, size);
+  ctx.fillStyle = '#0a0e18';
+  ctx.fillRect(x + 2, y + 2, size - 4, size - 4);
+  // subtle inner grid dot
+  ctx.fillStyle = 'rgba(255,255,255,0.035)';
+  ctx.fillRect(x + size / 2 - 2, y + size / 2 - 2, 4, 4);
+}
+
+function drawGridFrame() {
+  // outer frame around the grid
+  const pad = 12;
+  ctx.fillStyle = '#0a0e18';
+  ctx.fillRect(GRID_X - pad, GRID_Y - pad, GRID_PX + pad * 2, GRID_PX + pad * 2);
+  ctx.fillStyle = '#141a28';
+  ctx.fillRect(GRID_X - pad + 2, GRID_Y - pad + 2, GRID_PX + pad * 2 - 4, GRID_PX + pad * 2 - 4);
+
+  // inner well
+  ctx.fillStyle = '#0d1220';
+  ctx.fillRect(GRID_X - 4, GRID_Y - 4, GRID_PX + 8, GRID_PX + 8);
+  ctx.fillStyle = '#0a0e18';
+  ctx.fillRect(GRID_X - 2, GRID_Y - 2, GRID_PX + 4, GRID_PX + 4);
+
+  // pixel corner notches
+  const corners = [
+    [GRID_X - pad, GRID_Y - pad],
+    [GRID_X + GRID_PX + pad - 8, GRID_Y - pad],
+    [GRID_X - pad, GRID_Y + GRID_PX + pad - 8],
+    [GRID_X + GRID_PX + pad - 8, GRID_Y + GRID_PX + pad - 8]
+  ];
+  ctx.fillStyle = '#1f2740';
+  for (let i = 0; i < 4; i++) ctx.fillRect(corners[i][0], corners[i][1], 8, 8);
+}
+
+/* ---------- RENDER ---------- */
+function renderBackground() {
+  // deep gradient
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#0b101c');
+  g.addColorStop(0.4, '#0a0e18');
+  g.addColorStop(1, '#060812');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // subtle background pixel grid
+  ctx.fillStyle = 'rgba(255,255,255,0.018)';
+  for (let y = 0; y < H; y += 40) {
+    for (let x = 0; x < W; x += 40) {
+      if (((x / 40) + (y / 40)) % 2 === 0) ctx.fillRect(x, y, 20, 20);
+    }
+  }
+
+  // corner accents
+  ctx.fillStyle = 'rgba(80,140,255,0.06)';
+  ctx.fillRect(0, 0, 220, 4);
+  ctx.fillRect(0, 0, 4, 220);
+  ctx.fillRect(W - 220, H - 4, 220, 4);
+  ctx.fillRect(W - 4, H - 220, 4, 220);
+}
+
+function renderHUD() {
+  // score panel
+  ctx.fillStyle = 'rgba(10,14,24,0.7)';
+  ctx.fillRect(24, 22, 260, 100);
+  ctx.fillStyle = 'rgba(120,200,255,0.16)';
+  ctx.fillRect(24, 22, 260, 3);
+
+  ctx.font = 'bold 17px ui-monospace, "Courier New", monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = 'rgba(140,180,230,0.75)';
+  ctx.fillText('ОЧКИ', 42, 52);
+
+  ctx.font = 'bold 46px ui-monospace, "Courier New", monospace';
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillText(String(Math.floor(G.scoreDisplay)), 44, 96);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(String(Math.floor(G.scoreDisplay)), 42, 94);
+
+  // best panel
+  ctx.fillStyle = 'rgba(10,14,24,0.7)';
+  ctx.fillRect(W - 234, 22, 210, 100);
+  ctx.fillStyle = 'rgba(255,217,61,0.18)';
+  ctx.fillRect(W - 234, 22, 210, 3);
+
+  ctx.font = 'bold 17px ui-monospace, "Courier New", monospace';
+  ctx.fillStyle = 'rgba(255,217,61,0.75)';
+  ctx.textAlign = 'right';
+  ctx.fillText('РЕКОРД', W - 42, 52);
+
+  ctx.font = 'bold 34px ui-monospace, "Courier New", monospace';
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillText(String(G.best), W - 40, 92);
+  ctx.fillStyle = '#ffd93d';
+  ctx.fillText(String(G.best), W - 42, 90);
+
+  // combo indicator
+  const comboActive = G.combo > 1;
+  const comboA = comboActive ? Math.min(1, 0.5 + G.comboAnim * 0.8) : 0;
+  if (comboA > 0.01) {
+    const cx = W / 2;
+    const cy = 74;
+    const pulse = 1 + Math.sin(G.pulseT * 8) * 0.06;
+    ctx.globalAlpha = comboA;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(pulse, pulse);
+
+    ctx.font = 'bold 32px ui-monospace, "Courier New", monospace';
+    ctx.textAlign = 'center';
+    const label = 'КОМБО x' + G.combo;
+    const tw = ctx.measureText(label).width;
+
+    ctx.fillStyle = 'rgba(10,14,24,0.85)';
+    ctx.fillRect(-tw / 2 - 16, -24, tw + 32, 42);
+    ctx.strokeStyle = '#ff9bb8';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(-tw / 2 - 16, -24, tw + 32, 42);
+
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillText(label, 2, 7);
+    ctx.fillStyle = '#ff9bb8';
+    ctx.fillText(label, 0, 5);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  // lines cleared small text
+  ctx.font = 'bold 14px ui-monospace, "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(140,180,230,0.4)';
+  ctx.fillText('ЛИНИЙ: ' + G.linesCleared + '   ·   ФИГУР: ' + G.piecesPlaced, W / 2, 128);
+}
+
+function renderGrid() {
+  drawGridFrame();
+
+  // empty cells
+  for (let r = 0; r < GRID; r++) {
+    for (let c = 0; c < GRID; c++) {
+      const x = GRID_X + c * PITCH;
+      const y = GRID_Y + r * PITCH;
+      if (G.grid[r][c] === null) {
+        drawEmptyCell(x, y, CELL);
+      }
+    }
+  }
+
+  // placed blocks
+  for (let r = 0; r < GRID; r++) {
+    for (let c = 0; c < GRID; c++) {
+      const cell = G.grid[r][c];
+      if (cell === null) continue;
+      const x = GRID_X + c * PITCH;
+      const y = GRID_Y + r * PITCH;
+      drawBlockPx(x, y, CELL, PALETTES[cell.pal]);
+    }
+  }
+
+  // clear animations (blocks shrinking + fading)
+  for (let i = 0; i < G.clearAnims.length; i++) {
+    const a = G.clearAnims[i];
+    const p = a.t / a.dur;
+    for (let k = 0; k < a.cells.length; k++) {
+      const cell = a.cells[k];
+      const cx = GRID_X + cell.c * PITCH + CELL / 2;
+      const cy = GRID_Y + cell.r * PITCH + CELL / 2;
+      const scale = 1 + p * 0.6;
+      const alpha = Math.max(0, 1 - p * 1.15);
+      const size = CELL * scale;
+      drawBlockPx(cx - size / 2, cy - size / 2, size, PALETTES[cell.pal], alpha);
+    }
+  }
+
+  // drag preview
+  if (G.drag && G.drag.hasSnap) {
+    const d = G.drag;
+    const pal = PALETTES[d.piece.colorIdx];
+
+    // highlight snapped cells
+    for (let i = 0; i < d.piece.cells.length; i++) {
+      const [r, c] = d.piece.cells[i];
+      const x = GRID_X + (d.snapC + c) * PITCH;
+      const y = GRID_Y + (d.snapR + r) * PITCH;
+
+      if (d.valid) {
+        // valid: green glow
+        ctx.fillStyle = 'rgba(80,240,140,0.30)';
+        ctx.fillRect(x, y, CELL, CELL);
+        ctx.strokeStyle = 'rgba(120,255,180,0.9)';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x + 1.5, y + 1.5, CELL - 3, CELL - 3);
+      } else {
+        // invalid: red glow
+        ctx.fillStyle = 'rgba(255,80,80,0.28)';
+        ctx.fillRect(x, y, CELL, CELL);
+        ctx.strokeStyle = 'rgba(255,120,120,0.85)';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x + 1.5, y + 1.5, CELL - 3, CELL - 3);
+        // red X
+        ctx.strokeStyle = 'rgba(255,80,80,0.9)';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(x + 14, y + 14);
+        ctx.lineTo(x + CELL - 14, y + CELL - 14);
+        ctx.moveTo(x + CELL - 14, y + 14);
+        ctx.lineTo(x + 14, y + CELL - 14);
+        ctx.stroke();
+      }
+    }
+
+    // ghost outline of the piece
+    ctx.globalAlpha = 0.55;
+    for (let i = 0; i < d.piece.cells.length; i++) {
+      const [r, c] = d.piece.cells[i];
+      const x = GRID_X + (d.snapC + c) * PITCH;
+      const y = GRID_Y + (d.snapR + r) * PITCH;
+      drawBlockPx(x, y, CELL, pal, 0.4);
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+function renderTray() {
+  // tray background
+  const bg = ctx.createLinearGradient(0, TRAY_Y - 8, 0, TRAY_Y + TRAY_H + 8);
+  bg.addColorStop(0, 'rgba(10,14,24,0.6)');
+  bg.addColorStop(1, 'rgba(6,8,16,0.9)');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, TRAY_Y - 10, W, TRAY_H + 24);
+
+  // top divider line
+  ctx.fillStyle = 'rgba(80,140,255,0.14)';
+  ctx.fillRect(0, TRAY_Y - 10, W, 3);
+
+  // slot separators
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  ctx.fillRect(W / 3 - 1, TRAY_Y + 6, 2, TRAY_H - 12);
+  ctx.fillRect(W * 2 / 3 - 1, TRAY_Y + 6, 2, TRAY_H - 12);
+
+  // pieces
+  for (let i = 0; i < 3; i++) {
+    const p = G.tray[i];
+    if (!p) continue;
+    // skip if being dragged
+    if (G.drag && G.drag.trayIdx === i) continue;
+
+    const b = trayPieceBounds(p, i);
+    const hovered = G.hoverSlot === i;
+    const bob = Math.sin(G.pulseT * 2 + p.bobPhase) * (hovered ? 3 : 1.5);
+    const yOff = hovered ? -6 : 0;
+
+    const pal = PALETTES[p.colorIdx];
+
+    // subtle glow under hovered piece
+    if (hovered) {
+      ctx.fillStyle = 'rgba(120,200,255,0.08)';
+      ctx.fillRect(b.x - 8, b.y - 8 + yOff, b.w + 16, b.h + 16);
+    }
+
+    for (let k = 0; k < p.cells.length; k++) {
+      const [r, c] = p.cells[k];
+      const x = b.x + c * TR_PITCH;
+      const y = b.y + r * TR_PITCH + bob + yOff;
+      const alpha = hovered ? 1 : 0.9;
+      drawBlockPx(x, y, TR_CELL, pal, alpha);
+    }
+  }
+}
+
+function renderDragPiece() {
+  if (!G.drag) return;
+  const d = G.drag;
+  const pal = PALETTES[d.piece.colorIdx];
+
+  // if not snapped, draw at cursor position at full grid size
+  if (!d.hasSnap) {
+    // shadow under the piece
+    for (let i = 0; i < d.piece.cells.length; i++) {
+      const [r, c] = d.piece.cells[i];
+      const x = d.gx + c * PITCH;
+      const y = d.gy + r * PITCH;
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fillRect(x + 6, y + 8, CELL, CELL);
+    }
+    for (let i = 0; i < d.piece.cells.length; i++) {
+      const [r, c] = d.piece.cells[i];
+      const x = d.gx + c * PITCH;
+      const y = d.gy + r * PITCH;
+      drawBlockPx(x, y, CELL, pal, 1);
+    }
+    // subtle glow around held piece
+    ctx.globalAlpha = 0.5;
+    ctx.strokeStyle = 'rgba(120,200,255,0.5)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < d.piece.cells.length; i++) {
+      const [r, c] = d.piece.cells[i];
+      const x = d.gx + c * PITCH;
+      const y = d.gy + r * PITCH;
+      ctx.strokeRect(x - 1, y - 1, CELL + 2, CELL + 2);
+    }
+    ctx.globalAlpha = 1;
+  } else {
+    // snapped: draw the actual piece at the snap position (above everything)
+    for (let i = 0; i < d.piece.cells.length; i++) {
+      const [r, c] = d.piece.cells[i];
+      const x = GRID_X + (d.snapC + c) * PITCH;
+      const y = GRID_Y + (d.snapR + r) * PITCH;
+      const alpha = d.valid ? 1 : 0.65;
+      drawBlockPx(x, y, CELL, pal, alpha);
+    }
+  }
+}
+
+function renderParticles() {
+  for (let i = 0; i < G.particles.length; i++) {
+    const p = G.particles[i];
+    const a = Math.max(0, Math.min(1, p.life / p.max * 1.5));
+    ctx.globalAlpha = a;
+    ctx.fillStyle = p.col;
+    ctx.fillRect(p.x - p.sz / 2, p.y - p.sz / 2, p.sz, p.sz);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function renderPopups() {
+  for (let i = 0; i < G.popups.length; i++) {
+    const p = G.popups[i];
+    const t = p.t / p.dur;
+    let alpha = 1;
+    if (t < 0.12) alpha = t / 0.12;
+    else if (t > 0.6) alpha = Math.max(0, 1 - (t - 0.6) / 0.4);
+
+    ctx.globalAlpha = alpha;
+    ctx.font = 'bold ' + p.size + 'px ui-monospace, "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillText(p.text, p.x + 3, p.y + 3);
+    ctx.fillStyle = p.col;
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function renderStartScreen() {
+  ctx.fillStyle = 'rgba(4,6,12,0.86)';
+  ctx.fillRect(0, 0, W, H);
+
+  const t = G.pulseT;
+
+  // title
+  ctx.font = 'bold 88px ui-monospace, "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+
+  const bob = Math.sin(t * 1.6) * 8;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.fillText('БЛОК', W / 2 + 6, 300 + bob + 6);
+  ctx.fillText('БЛАСТ', W / 2 + 6, 396 + bob + 6);
+
+  const g1 = ctx.createLinearGradient(0, 230, 0, 320);
+  g1.addColorStop(0, '#7ad3ff');
+  g1.addColorStop(1, '#4d9fff');
+  ctx.fillStyle = g1;
+  ctx.fillText('БЛОК', W / 2, 300 + bob);
+
+  const g2 = ctx.createLinearGradient(0, 320, 0, 420);
+  g2.addColorStop(0, '#ff9bb8');
+  g2.addColorStop(1, '#f06595');
+  ctx.fillStyle = g2;
+  ctx.fillText('БЛАСТ', W / 2, 396 + bob);
+
+  // subtitle
+  ctx.font = 'bold 20px ui-monospace, "Courier New", monospace';
+  ctx.fillStyle = 'rgba(160,200,240,0.75)';
+  ctx.fillText('ПИКСЕЛЬНАЯ ГОЛОВОЛОМКА 8×8', W / 2, 448);
+
+  // decorative blocks
+  const demos = [
+    { x: W / 2 - 168, y: 520, pal: 0, cells: [[0,0],[0,1],[1,0],[1,1]] },
+    { x: W / 2 - 40, y: 512, pal: 2, cells: [[0,0],[0,1],[0,2],[1,1]] },
+    { x: W / 2 + 90, y: 516, pal: 3, cells: [[0,0],[1,0],[1,1],[2,0],[2,1]] }
+  ];
+  const s = 44, pitch = 48;
+  for (let i = 0; i < demos.length; i++) {
+    const d = demos[i];
+    const dy = Math.sin(t * 2 + i * 1.3) * 5;
+    for (let k = 0; k < d.cells.length; k++) {
+      const [r, c] = d.cells[k];
+      drawBlockPx(d.x + c * pitch, d.y + r * pitch + dy, s, PALETTES[d.pal]);
+    }
+  }
+
+  // prompt
+  ctx.globalAlpha = 0.55 + 0.45 * Math.sin(t * 3);
+  ctx.font = 'bold 26px ui-monospace, "Courier New", monospace';
+  ctx.fillStyle = '#8ef0c8';
+  ctx.fillText('НАЖМИ / TAP — ИГРАТЬ', W / 2, 700);
+  ctx.globalAlpha = 1;
+
+  // rules
+  ctx.font = 'bold 15px ui-monospace, "Courier New", monospace';
+  ctx.fillStyle = 'rgba(200,220,240,0.55)';
+  ctx.fillText('ПЕРЕТАЩИ ФИГУРУ НА ПОЛЕ', W / 2, 762);
+  ctx.fillText('ЗАПОЛНИ РЯД ИЛИ СТОЛБЕЦ — ОН ИСЧЕЗНЕТ', W / 2, 788);
+  ctx.fillText('КОМБО УМНОЖАЕТ ОЧКИ ЗА ПОДРЯД', W / 2, 814);
+
+  ctx.font = 'bold 14px ui-monospace, "Courier New", monospace';
+  ctx.fillStyle = 'rgba(255,217,61,0.6)';
+  ctx.fillText('РЕКОРД: ' + G.best, W / 2, 862);
+
+  // corner decorations
+  ctx.fillStyle = 'rgba(80,140,255,0.14)';
+  ctx.fillRect(24, 24, 60, 6);
+  ctx.fillRect(24, 24, 6, 60);
+  ctx.fillRect(W - 84, H - 30, 60, 6);
+  ctx.fillRect(W - 30, H - 84, 6, 60);
+}
+
+function renderGameOver() {
+  const a = Math.min(1, G.gameOverTimer / 0.35);
+  ctx.globalAlpha = a;
+  ctx.fillStyle = 'rgba(20,4,10,0.82)';
+  ctx.fillRect(0, 0, W, H);
+
+  const t = G.pulseT;
+
+  ctx.font = 'bold 64px ui-monospace, "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.fillText('ИГРА ОКОНЧЕНА', W / 2 + 4, 288 + 4);
+  ctx.fillStyle = '#ff4b6b';
+  ctx.fillText('ИГРА ОКОНЧЕНА', W / 2, 288);
+
+  // score panel
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(W / 2 - 220, 330, 440, 180);
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(W / 2 - 220, 330, 440, 180);
+
+  ctx.font = 'bold 20px ui-monospace, "Courier New", monospace';
+  ctx.fillStyle = 'rgba(140,180,230,0.75)';
+  ctx.textAlign = 'left';
+  ctx.fillText('ВАШ СЧЁТ', W / 2 - 190, 372);
+  ctx.fillText('РЕКОРД', W / 2 - 190, 452);
+
+  ctx.font = 'bold 46px ui-monospace, "Courier New", monospace';
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillText(String(G.score), W / 2 - 188, 422);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(String(G.score), W / 2 - 190, 420);
+
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillText(String(G.best), W / 2 - 188, 502);
+  ctx.fillStyle = '#ffd93d';
+  ctx.fillText(String(G.best), W / 2 - 190, 500);
+
+  // new record
+  const isBest = G.score >= G.best && G.score > 0;
+  if (isBest) {
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 24px ui-monospace, "Courier New", monospace';
+    ctx.globalAlpha = a * (0.6 + 0.4 * Math.sin(t * 5));
+    ctx.fillStyle = '#8ef0c8';
+    ctx.fillText('★ НОВЫЙ РЕКОРД ★', W / 2, 552);
+    ctx.globalAlpha = a;
+  }
+
+  // stats
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 16px ui-monospace, "Courier New", monospace';
+  ctx.fillStyle = 'rgba(180,210,240,0.6)';
+  ctx.fillText('ЛИНИЙ ОЧИЩЕНО: ' + G.linesCleared + '   ·   ФИГУР: ' + G.piecesPlaced, W / 2, 600);
+
+  // tap to restart
+  if (G.gameOverTimer > 0.5) {
+    ctx.globalAlpha = a * (0.55 + 0.45 * Math.sin(t * 3));
+    ctx.font = 'bold 26px ui-monospace, "Courier New", monospace';
+    ctx.fillStyle = '#8ef0c8';
+    ctx.fillText('НАЖМИ — ИГРАТЬ СНОВА', W / 2, 690);
+    ctx.globalAlpha = a;
+  }
+
+  ctx.globalAlpha = 1;
+}
+
+function render() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  // shake
+  if (G.shake > 0.4) {
+    ctx.translate((Math.random() - 0.5) * G.shake, (Math.random() - 0.5) * G.shake);
+  }
+
+  renderBackground();
+
+  if (G.state === 'playing' || G.state === 'gameover') {
+    renderHUD();
+    renderGrid();
+    renderTray();
+    renderDragPiece();
+    renderParticles();
+    renderPopups();
+  }
+
+  // flash
+  if (G.flash > 0) {
+    ctx.fillStyle = 'rgba(255,255,255,' + (G.flash * 0.22) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // vignette
+  const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.38, W / 2, H / 2, H * 1.05);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.6)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  if (G.state === 'start') renderStartScreen();
+  else if (G.state === 'gameover') renderGameOver();
+}
+
+/* ---------- MAIN LOOP ---------- */
+newGrid();
+let last = performance.now();
+
+function loop(now) {
+  let dt = (now - last) / 1000;
+  last = now;
+  if (dt > 0.05) dt = 0.05;
+  if (dt < 0) dt = 0;
+
+  update(dt);
+  render();
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+<a href="../index.html" class="gm-back" aria-label="Назад в меню">&larr; МЕНЮ</a>
+<style>.gm-back{position:fixed;top:10px;left:10px;z-index:9999;font:bold 12px/1 ui-monospace,"Courier New",monospace;letter-spacing:.08em;color:#fff;text-decoration:none;background:rgba(0,0,0,.55);border:2px solid rgba(255,255,255,.25);padding:8px 10px;border-radius:4px;opacity:.55;transition:opacity .15s,border-color .15s}.gm-back:hover,.gm-back:focus-visible{opacity:1;border-color:#ffd93d;outline:none}</style>
+</body>
+</html>
