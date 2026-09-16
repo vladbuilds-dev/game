@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Пиксель Аркада</title>
-<meta name="description" content="Девять пиксельных браузерных игр: слоты, раннер, гонки, головоломка, космос, бильярд, шахматы, блекджек и кофейня.">
+<meta name="description" content="Одиннадцать пиксельных браузерных игр: слоты, тетрис, арканоид, раннер, гонки, головоломка, космос, бильярд, шахматы, блекджек и кофейня.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕹️</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -153,7 +153,7 @@
   <header>
     <div>
       <h1><span class="a">ПИКСЕЛЬ</span><br><span class="b">АРКАДА</span></h1>
-      <p class="sub">9 игр · работают в браузере · на компе и на телефоне</p>
+      <p class="sub">11 игр · работают в браузере · на компе и на телефоне</p>
     </div>
     <div class="coin">ВЫБЕРИ ИГРУ ▸</div>
   </header>
@@ -210,6 +210,26 @@
         <div class="name">БЛОК БЛАСТ</div>
         <p class="desc">Поле 8×8. Ставь фигуры, собирай полные ряды и столбцы, копи комбо.</p>
         <div class="keys">Перетаскивай фигуры мышкой или пальцем</div>
+        <div class="play"><span>ИГРАТЬ</span><span>▶</span></div>
+      </div>
+    </a>
+
+    <a class="card" data-id="tetris" href="games/tetris.html" style="--c:#40d0e0">
+      <div class="shot" style="background-image:url(img/tetris.png)"><span class="rec" hidden></span><span class="tag">ГОЛОВОЛОМКА</span></div>
+      <div class="body">
+        <div class="name">ТЕТРИС</div>
+        <p class="desc">Классика 10×20: призрак фигуры, карман, очередь из пяти фигур и скорость, которая растёт с каждым уровнем.</p>
+        <div class="keys">← → · ↑ поворот · пробел сброс · C карман · P пауза</div>
+        <div class="play"><span>ИГРАТЬ</span><span>▶</span></div>
+      </div>
+    </a>
+
+    <a class="card" data-id="arkanoid" href="games/arkanoid.html" style="--c:#f08830">
+      <div class="shot" style="background-image:url(img/arkanoid.png)"><span class="rec" hidden></span><span class="tag">АРКАДА</span></div>
+      <div class="body">
+        <div class="name">АРКАНОИД</div>
+        <p class="desc">Разбей все кирпичи на 6 уровнях. Бонусы: лазер, три мяча, липкая платформа, лишняя жизнь.</p>
+        <div class="keys">Мышка или ← → · пробел запуск · P пауза</div>
         <div class="play"><span>ИГРАТЬ</span><span>▶</span></div>
       </div>
     </a>
@@ -280,6 +300,8 @@
     { id:'pixel-surf',    name:'PIXEL SURF',    c:'#ff5b6e', key:'pixelsurf_best',     fmt:function(v){ return v>0 ? v+' очк.' : null; } },
     { id:'pole-position', name:'POLE POSITION', c:'#40a0ff', key:'pole_pos_bestlap',   fmt:function(v){ return v>0 ? 'круг '+Math.floor(v/60)+':'+String(Math.floor(v%60)).padStart(2,'0') : null; } },
     { id:'block-blast',   name:'БЛОК БЛАСТ',    c:'#4d9fff', key:'blockblast_best',    fmt:function(v){ return v>0 ? v+' очк.' : null; } },
+    { id:'tetris',        name:'ТЕТРИС',        c:'#40d0e0', key:'tetris_best',        fmt:function(v){ return v>0 ? v+' очк.' : null; } },
+    { id:'arkanoid',      name:'АРКАНОИД',      c:'#f08830', key:'arkanoid_best',      fmt:function(v){ return v>0 ? v+' очк.' : null; } },
     { id:'kosmo-raketa',  name:'КОСМО-РАКЕТА',  c:'#c7f04a', key:'kosmo_rocket_best',  fmt:function(v){ return v>0 ? v+' очк.' : null; } },
     { id:'blackjack',     name:'БЛЕКДЖЕК 21',   c:'#3cdc8c', key:null,                 fmt:function(){ return null; } },
     { id:'chess',         name:'ШАХМАТЫ',       c:'#e0b070', key:null,                 fmt:function(){ return null; } },
@@ -287,9 +309,9 @@
     { id:'pixel-coffee',  name:'КОФЕЙНЯ',       c:'#ffa048', key:'pixcoffee_detailed', fmt:function(v){ return v!==0 ? '$'+v.toLocaleString('ru-RU') : null; } }
   ];
   // редакторский рейтинг «хиты»
-  var HITS = ['slots','pixel-surf','block-blast','kosmo-raketa','billiard','chess','pole-position','blackjack','pixel-coffee'];
+  var HITS = ['slots','pixel-surf','tetris','arkanoid','block-blast','kosmo-raketa','billiard','chess','pole-position','blackjack','pixel-coffee'];
   var PINNED = 'slots';
-  var HIT_LABEL = { 'slots':'главный хит аркады', 'pixel-surf':'самый залипательный', 'block-blast':'«ещё одну партию»', 'kosmo-raketa':'для сильных нервов',
+  var HIT_LABEL = { 'slots':'главный хит аркады', 'tetris':'вечная классика', 'arkanoid':'бьёт кирпичи и нервы', 'pixel-surf':'самый залипательный', 'block-blast':'«ещё одну партию»', 'kosmo-raketa':'для сильных нервов',
                     'pole-position':'олдскул 80-х', 'blackjack':'без риска', 'chess':'мозг на максимум', 'billiard':'физика как в жизни', 'pixel-coffee':'босс следит' };
 
   function get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }

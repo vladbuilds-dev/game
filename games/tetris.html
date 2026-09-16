@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>ПИКСЕЛЬ-ТЕТРИС</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body{
+    width:100%; height:100%;
+    background:#05060a;
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
+    touch-action:none;
+    font-family: ui-monospace, "Courier New", monospace;
+  }
+  canvas{
+    display:block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    width: min(100vw, 140vh);
+    height: auto;
+    aspect-ratio: 900 / 700;
+    box-shadow: 0 0 100px rgba(80,180,255,.20), 0 0 0 2px #0a1018;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<canvas id="c" width="900" height="700"></canvas>
+<script>
+"use strict";
+
+/* =========================================================
+   ПИКСЕЛЬ-ТЕТРИС
+   10×20 · SRS вращение · Hold · Призрак · 7-bag рандомайзер
+   ========================================================= */
+
+const cvs = document.getElementById('c');
+const ctx = cvs.getContext('2d');
+const W = 900, H = 700;
+ctx.imageSmoothingEnabled = false;
+
+/* ---------- LAYOUT ---------- */
+const COLS = 10;
+const ROWS = 20;
+const CELL = 30;
+const FIELD_X = 300;
+const FIELD_Y = 60;
+const FIELD_W = COLS * CELL;
+const FIELD_H = ROWS * CELL;
+
+/* ---------- PIECES ---------- */
+const PIECES = {
+  I: { color:'#40d0e0', cells:[[0,1],[1,1],[2,1],[3,1]] },
+  O: { color:'#f4d93d', cells:[[0,0],[1,0],[0,1],[1,1]] },
+  T: { color:'#a040d0', cells:[[1,0],[0,1],[1,1],[2,1]] },
+  S: { color:'#4be0a8', cells:[[1,0],[2,0],[0,1],[1,1]] },
+  Z: { color:'#e04060', cells:[[0,0],[1,0],[1,1],[2,1]] },
+  J: { color:'#4080e0', cells:[[0,0],[0,1],[1,1],[2,1]] },
+  L: { color:'#f08830', cells:[[2,0],[0,1],[1,1],[2,1]] }
+};
+const PIECE_NAMES = ['I','O','T','S','Z','J','L'];
+
+/* ---------- SRS ROTATION OFFSETS ---------- */
+// For each piece: 4 rotation states, each with 4 (x,y) offsets.
+// Coordinates are relative to piece bounding box top-left.
+// I and O use their own tables.
+const SRS = {
+  JLSTZ: [
+    // 0 -> R
+    [[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]],
+    // R -> 2
+    [[0,0],[1,0],[1,-1],[0,2],[1,2]],
+    // 2 -> L
+    [[0,0],[1,0],[1,1],[0,-2],[1,-2]],
+    // L -> 0
+    [[0,0],[-1,0],[-1,-1],[0,2],[-1,2]]
+  ],
+  I: [
+    [[0,0],[-2,0],[1,0],[-2,-1],[1,2]],
+    [[0,0],[-1,0],[2,0],[-1,2],[2,-1]],
+    [[0,0],[2,0],[-1,0],[2,1],[-1,-2]],
+    [[0,0],[1,0],[-2,0],[1,-2],[-2,1]]
+  ]
+};
+
+/* ---------- AUDIO ---------- */
+let actx = null;
+function AC() {
+  if (!actx) {
+    try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){ actx = null; }
+  }
+  return actx;
+}
+function beep(f0, f1, dur, vol, type, delay) {
+  const a = AC(); if (!a) return;
+  try {
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = type || 'square';
+    const t = a.currentTime + (delay || 0);
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+    o.connect(g); g.connect(a.destination);
+    o.start(t); o.stop(t + dur + 0.03);
+  } catch(e){}
+}
+const sfx = {
+  move()  { beep(220, 240, 0.03, 0.028); },
+  rotate(){ beep(340, 420, 0.05, 0.032); },
+  drop()  { beep(180, 90, 0.09, 0.045, 'square'); },
+  lock()  { beep(160, 130, 0.07, 0.038, 'triangle'); },
+  clear(n) {
+    const base = [660, 880, 1100, 1320];
+    for (let i = 0; i < Math.min(n + 1, 4); i++) {
+      beep(base[i], base[i] * 1.3, 0.1, 0.05, 'square', i * 0.05);
+    }
+  },
+  tetris() {
+    const notes = [523, 659, 784, 1046, 1318, 1568];
+    for (let i = 0; i < notes.length; i++) {
+      beep(notes[i], notes[i] * 1.15, 0.12, 0.06, 'square', i * 0.07);
+    }
+  },
+  hold()  { beep(500, 700, 0.05, 0.035); },
+  levelup(){ beep(660, 1100, 0.14, 0.055); beep(880, 1320, 0.14, 0.055, 'square', 0.1); },
+  gameover(){
+    const notes = [400, 360, 320, 280, 240, 180];
+    for (let i = 0; i < notes.length; i++) {
+      beep(notes[i], notes[i]*0.7, 0.18, 0.05, 'sawtooth', i * 0.14);
+    }
+  }
+};
+
+/* ---------- RECORD (localStorage может быть недоступен) ---------- */
+function getBest() {
+  try { return parseInt(localStorage.getItem('tetris_best') || '0', 10) || 0; } catch(e) { return 0; }
+}
+
+/* =========================================================
+   GAME STATE
+   ========================================================= */
+let G = null;
+
+function newBag() {
+  const b = PIECE_NAMES.slice();
+  for (let i = b.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = b[i]; b[i] = b[j]; b[j] = t;
+  }
+  return b;
+}
+
+function makePiece(type) {
+  const def = PIECES[type];
+  return {
+    type: type,
+    cells: def.cells.map(c => [c[0], c[1]]),
+    color: def.color,
+    x: 3, y: 0,
+    rot: 0
+  };
+}
+
+function reset() {
+  G = {
+    field: [],
+    bag: [],
+    next: [],
+    current: null,
+    held: null,
+    canHold: true,
+    score: 0,
+    lines: 0,
+    level: 1,
+    started: false,
+    over: false,
+    paused: false,
+    dropTimer: 0,
+    dropInterval: 0.8,
+    lockTimer: 0,
+    lockDelay: 0.5,
+    clearingLines: [],
+    clearT: 0,
+    shake: 0,
+    flash: 0,
+    message: '',
+    messageT: 0,
+    messageCol: '#fff',
+    mouse: { x: -1, y: -1 },
+    softDrop: false,
+    startT: 0
+  };
+  for (let r = 0; r < ROWS; r++) {
+    G.field.push(new Array(COLS).fill(null));
+  }
+  refillBag();
+  for (let i = 0; i < 5; i++) G.next.push(G.bag.length ? G.bag.pop() : nextFromBag());
+  spawn();
+}
+
+function refillBag() {
+  if (G.bag.length === 0) G.bag = newBag();
+}
+function nextFromBag() {
+  refillBag();
+  return G.bag.pop();
+}
+
+function spawn() {
+  const type = G.next.shift();
+  G.next.push(nextFromBag());
+  G.current = makePiece(type);
+  G.current.x = Math.floor((COLS - 4) / 2);
+  G.current.y = -1;
+
+  // check if spawn blocked
+  if (collides(G.current, 0, 0, 0)) {
+    gameOver();
+  }
+}
+
+/* =========================================================
+   COLLISION & ROTATION
+   ========================================================= */
+function collides(piece, dx, dy, drot) {
+  const cells = getRotatedCells(piece, drot);
+  for (const c of cells) {
+    const x = piece.x + c[0] + dx;
+    const y = piece.y + c[1] + dy;
+    if (x < 0 || x >= COLS) return true;
+    if (y >= ROWS) return true;
+    if (y < 0) continue;
+    if (G.field[y][x]) return true;
+  }
+  return false;
+}
+
+function getRotatedCells(piece, drot) {
+  let cells = piece.cells.map(c => [c[0], c[1]]);
+  const rot = ((piece.rot + drot) % 4 + 4) % 4;
+  for (let i = 0; i < rot; i++) {
+    cells = cells.map(c => [c[1], -c[0]]);
+  }
+  // normalize to min x = 0, min y = 0
+  let minX = 99, minY = 99;
+  for (const c of cells) { if (c[0] < minX) minX = c[0]; if (c[1] < minY) minY = c[1]; }
+  cells = cells.map(c => [c[0] - minX, c[1] - minY]);
+  return cells;
+}
+
+function tryRotate(dir) {
+  if (!G.current) return;
+  const piece = G.current;
+  const drot = dir; // 1 = CW, -1 = CCW
+
+  // get offsets
+  let offsets;
+  if (piece.type === 'I') {
+    const idx = dir === 1 ? piece.rot : (piece.rot + 3) % 4;
+    offsets = SRS.I[idx];
+  } else if (piece.type === 'O') {
+    // O doesn't rotate in terms of position, no offset needed
+    offsets = [[0,0]];
+  } else {
+    const idx = dir === 1 ? piece.rot : (piece.rot + 3) % 4;
+    offsets = SRS.JLSTZ[idx];
+  }
+
+  for (const off of offsets) {
+    const nx = piece.x + off[0];
+    const ny = piece.y - off[1]; // SRS y positive is down in our coords, but table uses y positive up
+    if (!collidesWithRot(piece, nx - piece.x, ny - piece.y, drot)) {
+      piece.x = nx;
+      piece.y = ny;
+      piece.rot = ((piece.rot + drot) % 4 + 4) % 4;
+      sfx.rotate();
+      return;
+    }
+  }
+}
+
+function collidesWithRot(piece, dx, dy, drot) {
+  const cells = getRotatedCells(piece, drot);
+  for (const c of cells) {
+    const x = piece.x + c[0] + dx;
+    const y = piece.y + c[1] + dy;
+    if (x < 0 || x >= COLS) return true;
+    if (y >= ROWS) return true;
+    if (y < 0) continue;
+    if (G.field[y][x]) return true;
+  }
+  return false;
+}
+
+/* =========================================================
+   MOVEMENT
+   ========================================================= */
+function move(dx) {
+  if (!G.current) return;
+  if (!collides(G.current, dx, 0, 0)) {
+    G.current.x += dx;
+    sfx.move();
+    resetLockTimer();
+  }
+}
+
+function softDropStep() {
+  if (!G.current) return;
+  if (!collides(G.current, 0, 1, 0)) {
+    G.current.y++;
+    G.score += 1;
+  } else {
+    lockPiece();
+  }
+}
+
+function hardDrop() {
+  if (!G.current) return;
+  let dropped = 0;
+  while (!collides(G.current, 0, 1, 0)) {
+    G.current.y++;
+    dropped++;
+  }
+  G.score += dropped * 2;
+  sfx.drop();
+  lockPiece();
+}
+
+function resetLockTimer() {
+  if (collides(G.current, 0, 1, 0)) {
+    G.lockTimer = 0;
+  }
+}
+
+/* =========================================================
+   LOCK & CLEAR
+   ========================================================= */
+function lockPiece() {
+  const piece = G.current;
+  const cells = getRotatedCells(piece, 0);
+  let outsideTop = false;
+
+  for (const c of cells) {
+    const x = piece.x + c[0];
+    const y = piece.y + c[1];
+    if (y < 0) { outsideTop = true; continue; }
+    if (y >= ROWS) continue;
+    G.field[y][x] = piece.color;
+  }
+  sfx.lock();
+
+  if (outsideTop) { gameOver(); return; }
+
+  // find full lines
+  const full = [];
+  for (let r = 0; r < ROWS; r++) {
+    let ok = true;
+    for (let c = 0; c < COLS; c++) if (!G.field[r][c]) { ok = false; break; }
+    if (ok) full.push(r);
+  }
+
+  if (full.length > 0) {
+    // фигура уже в поле: пока идёт анимация очистки, управлять нечем
+    G.current = null;
+    G.clearingLines = full;
+    G.clearT = 0;
+    G.flash = 1;
+    G.shake = full.length * 3;
+    scoreLines(full.length);
+    if (full.length === 4) sfx.tetris();
+    else sfx.clear(full.length);
+  } else {
+    G.canHold = true;
+    spawn();
+  }
+}
+
+function scoreLines(n) {
+  const base = [0, 100, 300, 500, 800];
+  const pts = base[n] * G.level;
+  G.score += pts;
+  G.lines += n;
+  G.message = '+' + pts + (n === 4 ? ' ТЕТРИС!' : n === 3 ? ' ТРОЙНОЙ' : n === 2 ? ' ДВОЙНОЙ' : '');
+  G.messageT = 1.3;
+  G.messageCol = n === 4 ? '#ffd93d' : (n >= 2 ? '#4be0a8' : '#ffffff');
+
+  const newLevel = Math.floor(G.lines / 10) + 1;
+  if (newLevel > G.level) {
+    G.level = newLevel;
+    G.dropInterval = Math.max(0.06, 0.8 - (G.level - 1) * 0.07);
+    sfx.levelup();
+    G.message = 'УРОВЕНЬ ' + G.level;
+    G.messageCol = '#ffd93d';
+    G.messageT = 1.6;
+  }
+}
+
+function finishClear() {
+  const rows = G.clearingLines.slice().sort((a, b) => a - b);
+  for (const r of rows) {
+    G.field.splice(r, 1);
+    G.field.unshift(new Array(COLS).fill(null));
+  }
+  G.clearingLines = [];
+  G.canHold = true;
+  spawn();
+}
+
+/* =========================================================
+   HOLD
+   ========================================================= */
+function holdPiece() {
+  if (!G.current || !G.canHold) return;
+  const cur = G.current.type;
+  if (G.held) {
+    const h = G.held;
+    G.held = cur;
+    G.current = makePiece(h);
+    G.current.x = Math.floor((COLS - 4) / 2);
+    G.current.y = -1;
+  } else {
+    G.held = cur;
+    spawn();
+  }
+  G.canHold = false;
+  sfx.hold();
+}
+
+/* =========================================================
+   GAME OVER
+   ========================================================= */
+function gameOver() {
+  G.over = true;
+  sfx.gameover();
+  const best = getBest();
+  if (G.score > best) {
+    try { localStorage.setItem('tetris_best', String(G.score)); } catch(e){}
+  }
+}
+
+/* =========================================================
+   INPUT
+   ========================================================= */
+window.addEventListener('keydown', e => {
+  const k = e.key;
+  if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(k)) e.preventDefault();
+  if (e.repeat) {
+    // Handle soft drop repeat
+    if (k === 'ArrowDown' && G.current && G.started && !G.over && !G.paused) {
+      softDropStep();
+    }
+    return;
+  }
+  AC();
+
+  if (!G.started) { G.started = true; return; }
+  if (G.over) { if (k === ' ' || k === 'Enter') reset(); return; }
+  if (k === 'p' || k === 'P' || k === 'з' || k === 'З') { G.paused = !G.paused; return; }
+  if (G.paused) return;
+
+  if (k === 'ArrowLeft') move(-1);
+  else if (k === 'ArrowRight') move(1);
+  else if (k === 'ArrowUp' || k === 'x' || k === 'X' || k === 'ч' || k === 'Ч') tryRotate(1);
+  else if (k === 'z' || k === 'Z' || k === 'я' || k === 'Я') tryRotate(-1);
+  else if (k === 'ArrowDown') { G.softDrop = true; softDropStep(); }
+  else if (k === ' ') hardDrop();
+  else if (k === 'c' || k === 'C' || k === 'с' || k === 'С') holdPiece();
+});
+
+window.addEventListener('keyup', e => {
+  if (e.key === 'ArrowDown') G.softDrop = false;
+});
+
+cvs.addEventListener('mousedown', e => {
+  e.preventDefault();
+  AC();
+  if (!G.started) { G.started = true; return; }
+  if (G.over) { reset(); return; }
+});
+
+cvs.addEventListener('touchstart', e => {
+  e.preventDefault();
+  AC();
+  const t = e.changedTouches[0];
+  const r = cvs.getBoundingClientRect();
+  const px = (t.clientX - r.left) / r.width * W;
+  const py = (t.clientY - r.top) / r.height * H;
+  G.touch = { x0: px, y0: py, x: px, y: py, t0: performance.now(), moved: false };
+  if (!G.started) { G.started = true; return; }
+  if (G.over) { reset(); return; }
+}, { passive: false });
+
+cvs.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (!G.touch || !G.current || !G.started || G.over || G.paused) return;
+  const t = e.changedTouches[0];
+  const r = cvs.getBoundingClientRect();
+  const px = (t.clientX - r.left) / r.width * W;
+  const py = (t.clientY - r.top) / r.height * H;
+  const dx = px - G.touch.x;
+  const dy = py - G.touch.y;
+  if (Math.abs(dx) > 30) {
+    move(dx > 0 ? 1 : -1);
+    G.touch.x = px;
+    G.touch.moved = true;
+  }
+  if (dy > 40) {
+    softDropStep();
+    G.touch.y = py;
+    G.touch.moved = true;
+  }
+}, { passive: false });
+
+cvs.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (!G.touch) return;
+  const dt = performance.now() - G.touch.t0;
+  if (dt < 250 && !G.touch.moved) {
+    tryRotate(1);
+  }
+  G.touch = null;
+}, { passive: false });
+
+/* =========================================================
+   UPDATE
+   ========================================================= */
+function update(dt) {
+  if (!G.started || G.over || G.paused) return;
+
+  // clearing animation
+  if (G.clearingLines.length > 0) {
+    G.clearT += dt;
+    if (G.clearT > 0.32) {
+      finishClear();
+    }
+    return;
+  }
+
+  if (!G.current) return;
+
+  G.dropTimer += dt;
+  const interval = G.softDrop ? Math.min(0.04, G.dropInterval) : G.dropInterval;
+
+  if (G.dropTimer >= interval) {
+    G.dropTimer = 0;
+    if (!collides(G.current, 0, 1, 0)) {
+      G.current.y++;
+      if (G.softDrop) G.score += 1;
+    }
+  }
+
+  // lock delay
+  if (collides(G.current, 0, 1, 0)) {
+    G.lockTimer += dt;
+    if (G.lockTimer >= G.lockDelay) {
+      lockPiece();
+    }
+  } else {
+    G.lockTimer = 0;
+  }
+
+  if (G.messageT > 0) G.messageT -= dt;
+  G.shake = Math.max(0, G.shake - dt * 30);
+  G.flash = Math.max(0, G.flash - dt * 3);
+}
+
+/* =========================================================
+   RENDERING
+   ========================================================= */
+function txt(str, x, y, size, col, align, shadow) {
+  ctx.font = 'bold ' + size + 'px ui-monospace, "Courier New", monospace';
+  ctx.textAlign = align || 'left';
+  ctx.textBaseline = 'alphabetic';
+  if (shadow !== false) {
+    ctx.fillStyle = 'rgba(0,0,0,0.8)';
+    ctx.fillText(str, x + 2, y + 2);
+  }
+  ctx.fillStyle = col;
+  ctx.fillText(str, x, y);
+}
+
+function drawBlock(x, y, size, color, alpha) {
+  if (alpha !== undefined) ctx.globalAlpha = alpha;
+  // main
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, size, size);
+  // highlight (top-left)
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.fillRect(x, y, size, 3);
+  ctx.fillRect(x, y, 3, size);
+  // shadow (bottom-right)
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(x, y + size - 3, size, 3);
+  ctx.fillRect(x + size - 3, y, 3, size);
+  // inner dark border
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, size - 1, size - 1);
+  if (alpha !== undefined) ctx.globalAlpha = 1;
+}
+
+function drawBackground() {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#0a0f1a');
+  g.addColorStop(0.5, '#060810');
+  g.addColorStop(1, '#04040a');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // subtle grid pattern
+  ctx.fillStyle = 'rgba(100,160,220,0.018)';
+  for (let y = 0; y < H; y += 40) {
+    for (let x = 0; x < W; x += 40) {
+      if (((x/40) + (y/40)) % 2 === 0) ctx.fillRect(x, y, 20, 20);
+    }
+  }
+}
+
+function drawField() {
+  // field background
+  ctx.fillStyle = '#0a0e16';
+  ctx.fillRect(FIELD_X - 4, FIELD_Y - 4, FIELD_W + 8, FIELD_H + 8);
+  ctx.fillStyle = '#050810';
+  ctx.fillRect(FIELD_X, FIELD_Y, FIELD_W, FIELD_H);
+
+  // grid
+  ctx.strokeStyle = 'rgba(100,160,220,0.06)';
+  ctx.lineWidth = 1;
+  for (let c = 1; c < COLS; c++) {
+    ctx.beginPath();
+    ctx.moveTo(FIELD_X + c * CELL + 0.5, FIELD_Y);
+    ctx.lineTo(FIELD_X + c * CELL + 0.5, FIELD_Y + FIELD_H);
+    ctx.stroke();
+  }
+  for (let r = 1; r < ROWS; r++) {
+    ctx.beginPath();
+    ctx.moveTo(FIELD_X, FIELD_Y + r * CELL + 0.5);
+    ctx.lineTo(FIELD_X + FIELD_W, FIELD_Y + r * CELL + 0.5);
+    ctx.stroke();
+  }
+
+  // placed blocks
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const col = G.field[r][c];
+      if (col) drawBlock(FIELD_X + c * CELL, FIELD_Y + r * CELL, CELL, col);
+    }
+  }
+
+  // clearing flash
+  if (G.clearingLines.length > 0) {
+    const p = G.clearT / 0.32;
+    for (const r of G.clearingLines) {
+      ctx.fillStyle = 'rgba(255,255,255,' + (1 - p) + ')';
+      ctx.fillRect(FIELD_X, FIELD_Y + r * CELL, FIELD_W, CELL);
+    }
+  }
+}
+
+function drawGhostAndPiece() {
+  if (!G.current) return;
+  const piece = G.current;
+
+  // ghost position
+  let ghostY = piece.y;
+  while (!collides(piece, 0, ghostY - piece.y + 1, 0)) ghostY++;
+  const ghostCells = getRotatedCells(piece, 0);
+  const color = piece.color;
+
+  // draw ghost
+  for (const c of ghostCells) {
+    const x = piece.x + c[0];
+    const y = ghostY + c[1];
+    if (y < 0 || y >= ROWS) continue;
+    const px = FIELD_X + x * CELL;
+    const py = FIELD_Y + y * CELL;
+    ctx.strokeStyle = 'rgba(255,255,255,0.30)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(px + 2, py + 2, CELL - 4, CELL - 4);
+  }
+
+  // draw current piece
+  for (const c of ghostCells) {
+    const x = piece.x + c[0];
+    const y = piece.y + c[1];
+    if (y < 0) continue;
+    if (y >= ROWS) continue;
+    drawBlock(FIELD_X + x * CELL, FIELD_Y + y * CELL, CELL, color);
+  }
+}
+
+function drawPanel(x, y, w, h, title) {
+  ctx.fillStyle = 'rgba(10,14,22,0.9)';
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = 'rgba(80,180,255,0.35)';
+  ctx.fillRect(x, y, w, 3);
+  ctx.strokeStyle = 'rgba(80,180,255,0.28)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+  if (title) txt(title, x + 12, y + 24, 14, 'rgba(140,200,240,0.85)');
+}
+
+function drawMiniPiece(type, cx, cy, cell) {
+  if (!type) return;
+  const piece = makePiece(type);
+  const cells = getRotatedCells(piece, 0);
+  let minX = 99, maxX = -99, minY = 99, maxY = -99;
+  for (const c of cells) {
+    if (c[0] < minX) minX = c[0]; if (c[0] > maxX) maxX = c[0];
+    if (c[1] < minY) minY = c[1]; if (c[1] > maxY) maxY = c[1];
+  }
+  const pw = (maxX - minX + 1) * cell;
+  const ph = (maxY - minY + 1) * cell;
+  const x0 = cx - pw / 2;
+  const y0 = cy - ph / 2;
+  for (const c of cells) {
+    drawBlock(x0 + (c[0] - minX) * cell, y0 + (c[1] - minY) * cell, cell, piece.color);
+  }
+}
+
+function drawSidePanels() {
+  const PX = 20;
+  const PW = 250;
+  const RX = W - 250 - 20;
+  const RW = 250;
+
+  // LEFT: score, level, lines (подпись «ОЧКИ» стоит на месте заголовка панели, чтобы не налезать на рамку)
+  drawPanel(PX, 60, PW, 200);
+  txt('ОЧКИ', PX + 12, 84, 12, 'rgba(140,200,240,0.6)');
+  txt(String(G.score), PX + 12, 120, 32, '#ffffff');
+  txt('УРОВЕНЬ', PX + 12, 152, 12, 'rgba(140,200,240,0.6)');
+  txt(String(G.level), PX + 12, 186, 26, '#ffd93d');
+  txt('ЛИНИЙ', PX + 130, 152, 12, 'rgba(140,200,240,0.6)');
+  txt(String(G.lines), PX + 130, 186, 26, '#4be0a8');
+  txt('РЕКОРД', PX + 12, 222, 12, 'rgba(140,200,240,0.6)');
+  const best = getBest();
+  txt(String(Math.max(best, G.score)), PX + 12, 248, 22, '#ff9bb8');
+
+  // LEFT: Hold
+  drawPanel(PX, 280, PW, 130, 'HOLD [C]');
+  if (G.held) {
+    drawMiniPiece(G.held, PX + PW/2, 350, 22);
+  } else {
+    txt('—', PX + PW/2, 356, 28, 'rgba(255,255,255,0.2)', 'center');
+  }
+  if (!G.canHold && G.held) {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(PX + 1, 281, PW - 2, 128);
+    txt('ЖДЁТ', PX + PW/2, 355, 18, 'rgba(255,150,150,0.85)', 'center');
+  }
+
+  // LEFT: Controls
+  drawPanel(PX, 430, PW, 240);
+  txt('УПРАВЛЕНИЕ', PX + 12, 454, 14, 'rgba(140,200,240,0.85)');
+  txt('← →', PX + 12, 484, 14, '#ffd93d');
+  txt('движение', PX + 90, 484, 13, 'rgba(255,255,255,0.6)');
+  txt('↓', PX + 12, 508, 14, '#ffd93d');
+  txt('мягкий сброс', PX + 90, 508, 13, 'rgba(255,255,255,0.6)');
+  txt('↑ / X', PX + 12, 532, 14, '#ffd93d');
+  txt('поворот', PX + 90, 532, 13, 'rgba(255,255,255,0.6)');
+  txt('Z', PX + 12, 556, 14, '#ffd93d');
+  txt('поворот против', PX + 90, 556, 13, 'rgba(255,255,255,0.6)');
+  txt('ПРОБЕЛ', PX + 12, 580, 14, '#ffd93d');
+  txt('сброс', PX + 90, 580, 13, 'rgba(255,255,255,0.6)');
+  txt('C', PX + 12, 604, 14, '#ffd93d');
+  txt('в карман', PX + 90, 604, 13, 'rgba(255,255,255,0.6)');
+  txt('P', PX + 12, 628, 14, '#ffd93d');
+  txt('пауза', PX + 90, 628, 13, 'rgba(255,255,255,0.6)');
+
+  // RIGHT: Next queue
+  drawPanel(RX, 60, RW, 410, 'ДАЛЕЕ');
+  for (let i = 0; i < G.next.length; i++) {
+    const y = 60 + 80 + i * 68;
+    if (i === 0) {
+      // first one, slightly bigger
+      ctx.fillStyle = 'rgba(255,255,255,0.05)';
+      ctx.fillRect(RX + 15, y - 30, RW - 30, 68);
+      drawMiniPiece(G.next[i], RX + RW/2, y, 24);
+    } else {
+      drawMiniPiece(G.next[i], RX + RW/2, y, 18);
+    }
+  }
+
+  // RIGHT: Drop speed
+  drawPanel(RX, 480, RW, 190);
+  txt('СКОРОСТЬ', RX + 12, 504, 14, 'rgba(140,200,240,0.85)');
+  const dropPct = Math.min(1, (0.8 - G.dropInterval) / 0.74);
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.fillRect(RX + 15, 524, RW - 30, 16);
+  const dg = ctx.createLinearGradient(RX + 15, 0, RX + RW - 15, 0);
+  dg.addColorStop(0, '#4be0a8');
+  dg.addColorStop(0.6, '#ffd93d');
+  dg.addColorStop(1, '#ff4b6b');
+  ctx.fillStyle = dg;
+  ctx.fillRect(RX + 15, 524, (RW - 30) * dropPct, 16);
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(RX + 15.5, 524.5, RW - 31, 15);
+
+  // Tetris counter
+  txt('ДО УРОВНЯ', RX + 12, 580, 12, 'rgba(140,200,240,0.6)');
+  const rem = 10 - (G.lines % 10);
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.fillRect(RX + 15, 592, RW - 30, 12);
+  ctx.fillStyle = '#7ad3ff';
+  ctx.fillRect(RX + 15, 592, (RW - 30) * ((10 - rem) / 10), 12);
+  txt(String(rem) + ' линий', RX + RW - 15, 626, 13, 'rgba(255,255,255,0.7)', 'right');
+}
+
+function drawMessage() {
+  if (G.messageT <= 0) return;
+  const a = Math.min(1, G.messageT * 1.5);
+  ctx.globalAlpha = a;
+  const pulse = 1 + Math.sin(performance.now() / 130) * 0.04;
+  ctx.save();
+  ctx.translate(FIELD_X + FIELD_W / 2, FIELD_Y + FIELD_H / 2 - 40);
+  ctx.scale(pulse, pulse);
+  const size = G.message.includes('ТЕТРИС') || G.message.includes('УРОВЕНЬ') ? 40 : 32;
+  ctx.font = 'bold ' + size + 'px ui-monospace, "Courier New", monospace';
+  const tw = ctx.measureText(G.message).width;
+  ctx.fillStyle = 'rgba(0,0,0,0.72)';
+  ctx.fillRect(-tw/2 - 22, -30, tw + 44, 50);
+  ctx.strokeStyle = G.messageCol;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(-tw/2 - 22, -30, tw + 44, 50);
+  txt(G.message, 0, 6, size, G.messageCol, 'center');
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+function drawStartScreen() {
+  ctx.fillStyle = 'rgba(4,8,16,0.85)';
+  ctx.fillRect(0, 0, W, H);
+
+  const bob = Math.sin(performance.now() / 400) * 8;
+
+  ctx.font = 'bold 90px ui-monospace, "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = 'rgba(0,0,0,0.8)';
+  ctx.fillText('ТЕТРИС', W/2 + 5, 220 + bob + 5);
+  const g = ctx.createLinearGradient(0, 140, 0, 230);
+  g.addColorStop(0, '#40d0e0');
+  g.addColorStop(1, '#a040d0');
+  ctx.fillStyle = g;
+  ctx.fillText('ТЕТРИС', W/2, 220 + bob);
+
+  // demo blocks falling
+  const t = performance.now() / 1000;
+  for (let i = 0; i < 6; i++) {
+    const colors = ['#40d0e0','#f4d93d','#a040d0','#4be0a8','#e04060','#f08830'];
+    const cx = W/2 - 200 + i * 80;
+    const cy = 320 + Math.sin(t * 2 + i) * 20;
+    drawBlock(cx, cy, 40, colors[i]);
+  }
+
+  ctx.globalAlpha = 0.6 + 0.4 * Math.sin(performance.now() / 300);
+  txt('НАЖМИ ЛЮБУЮ КЛАВИШУ / TAP', W/2, 480, 22, '#8ef0c8', 'center');
+  ctx.globalAlpha = 1;
+
+  txt('← → движение · ↑ поворот · ↓ мягкий сброс', W/2, 540, 15, 'rgba(200,220,240,0.6)', 'center');
+  txt('ПРОБЕЛ — резкий сброс · C — карман · P — пауза', W/2, 566, 15, 'rgba(200,220,240,0.6)', 'center');
+
+  const best = getBest();
+  if (best > 0) {
+    txt('РЕКОРД: ' + best, W/2, 620, 16, 'rgba(255,217,61,0.75)', 'center');
+  }
+}
+
+function drawPauseScreen() {
+  ctx.fillStyle = 'rgba(4,8,16,0.75)';
+  ctx.fillRect(0, 0, W, H);
+  txt('ПАУЗА', W/2, H/2 - 20, 68, '#ffd93d', 'center');
+  txt('НАЖМИ P ЧТОБЫ ПРОДОЛЖИТЬ', W/2, H/2 + 40, 18, 'rgba(255,255,255,0.7)', 'center');
+}
+
+function drawGameOverScreen() {
+  ctx.fillStyle = 'rgba(20,4,10,0.85)';
+  ctx.fillRect(0, 0, W, H);
+
+  const bob = Math.sin(performance.now() / 260) * 6;
+  txt('ИГРА ОКОНЧЕНА', W/2, 200 + bob, 60, '#ff4b6b', 'center');
+
+  const best = getBest();
+  const isBest = G.score >= best && G.score > 0;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(W/2 - 220, 260, 440, 160);
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(W/2 - 218, 262, 436, 156);
+
+  txt('ОЧКИ', W/2 - 180, 306, 18, 'rgba(200,180,150,0.8)');
+  txt(String(G.score), W/2 - 180, 380, 54, '#ffffff');
+
+  txt('ЛИНИЙ', W/2 + 40, 306, 18, 'rgba(200,180,150,0.8)');
+  txt(String(G.lines), W/2 + 40, 380, 54, '#4be0a8');
+
+  if (isBest) {
+    const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 200);
+    ctx.globalAlpha = pulse;
+    txt('НОВЫЙ РЕКОРД!', W/2, 470, 26, '#ffd93d', 'center');
+    ctx.globalAlpha = 1;
+  } else {
+    txt('РЕКОРД: ' + best, W/2, 470, 18, 'rgba(255,217,61,0.7)', 'center');
+  }
+
+  ctx.globalAlpha = 0.6 + 0.4 * Math.sin(performance.now() / 300);
+  txt('ПРОБЕЛ / TAP — ЕЩЁ РАЗ', W/2, 550, 24, '#ffffff', 'center');
+  ctx.globalAlpha = 1;
+}
+
+function render() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  // shake
+  if (G.shake > 0.5) {
+    ctx.translate((Math.random() - 0.5) * G.shake, (Math.random() - 0.5) * G.shake);
+  }
+
+  drawBackground();
+
+  if (G.started && !G.over) {
+    drawSidePanels();
+    drawField();
+    drawGhostAndPiece();
+    drawMessage();
+    if (G.paused) drawPauseScreen();
+  } else if (G.over) {
+    drawSidePanels();
+    drawField();
+    drawGameOverScreen();
+  } else {
+    drawStartScreen();
+  }
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  // flash
+  if (G.flash > 0) {
+    ctx.fillStyle = 'rgba(255,255,255,' + (G.flash * 0.20) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // vignette
+  const vg = ctx.createRadialGradient(W/2, H/2, H*0.45, W/2, H/2, H*1.05);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
+}
+
+/* =========================================================
+   LOOP
+   ========================================================= */
+reset();
+
+let last = performance.now();
+function loop(now) {
+  let dt = (now - last) / 1000;
+  last = now;
+  if (dt > 0.05) dt = 0.05;
+  if (dt < 0) dt = 0;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+<a href="../index.html" class="gm-back" aria-label="Назад в меню">&larr; МЕНЮ</a>
+<style>.gm-back{position:fixed;top:10px;left:10px;z-index:9999;font:bold 12px/1 ui-monospace,"Courier New",monospace;letter-spacing:.08em;color:#fff;text-decoration:none;background:rgba(0,0,0,.55);border:2px solid rgba(255,255,255,.25);padding:8px 10px;border-radius:4px;opacity:.55;transition:opacity .15s,border-color .15s}.gm-back:hover,.gm-back:focus-visible{opacity:1;border-color:#ffd93d;outline:none}</style>
+</body>
+</html>
