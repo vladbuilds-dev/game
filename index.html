@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Пиксель Аркада</title>
-<meta name="description" content="Шесть пиксельных браузерных игр: раннер, гонки, головоломка, космос, блекджек и кофейня.">
+<meta name="description" content="Девять пиксельных браузерных игр: слоты, раннер, гонки, головоломка, космос, бильярд, шахматы, блекджек и кофейня.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕹️</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -153,7 +153,7 @@
   <header>
     <div>
       <h1><span class="a">ПИКСЕЛЬ</span><br><span class="b">АРКАДА</span></h1>
-      <p class="sub">6 игр · работают в браузере · на компе и на телефоне</p>
+      <p class="sub">9 игр · работают в браузере · на компе и на телефоне</p>
     </div>
     <div class="coin">ВЫБЕРИ ИГРУ ▸</div>
   </header>
@@ -175,6 +175,15 @@
   </section>
 
   <main class="grid">
+    <a class="card" data-id="slots" href="games/slots.html" style="--c:#ff4b8a">
+      <div class="shot" style="background-image:url(img/slots.png)"><span class="rec" hidden></span><span class="tag">★ ХИТ №1 · СЛОТЫ</span></div>
+      <div class="body">
+        <div class="name">СЛОТЫ</div>
+        <p class="desc">5 барабанов, 9 линий, WILD и SCATTER. Три scatter открывают бонус-игру с коробками. Кредиты виртуальные.</p>
+        <div class="keys">Пробел или кнопка «КРУТИТЬ» · ставка − / + / МАКС</div>
+        <div class="play"><span>ИГРАТЬ</span><span>▶</span></div>
+      </div>
+    </a>
     <a class="card" data-id="pixel-surf" href="games/pixel-surf.html" style="--c:#ff5b6e">
       <div class="shot" style="background-image:url(img/pixel-surf.png)"><span class="rec" hidden></span><span class="tag">РАННЕР</span></div>
       <div class="body">
@@ -234,6 +243,24 @@
         <div class="play"><span>ИГРАТЬ</span><span>▶</span></div>
       </div>
     </a>
+    <a class="card" data-id="chess" href="games/chess.html" style="--c:#e0b070">
+      <div class="shot" style="background-image:url(img/chess.png)"><span class="rec" hidden></span><span class="tag">СТРАТЕГИЯ</span></div>
+      <div class="body">
+        <div class="name">ШАХМАТЫ</div>
+        <p class="desc">Пиксельные шахматы против компьютера: рокировка, взятие на проходе, превращение пешки. Три уровня сложности.</p>
+        <div class="keys">Клик по фигуре, потом по клетке · отмена хода</div>
+        <div class="play"><span>ИГРАТЬ</span><span>▶</span></div>
+      </div>
+    </a>
+    <a class="card" data-id="billiard" href="games/billiard.html" style="--c:#4be0a8">
+      <div class="shot" style="background-image:url(img/billiard.png)"><span class="rec" hidden></span><span class="tag">СПОРТ</span></div>
+      <div class="body">
+        <div class="name">БИЛЬЯРД</div>
+        <p class="desc">Настоящая физика шаров: 15 шаров, 6 луз, прицел с подсказкой отскока. Очисти стол за минимум ударов.</p>
+        <div class="keys">Целься мышкой · зажми и отпусти — удар · N новая</div>
+        <div class="play"><span>ИГРАТЬ</span><span>▶</span></div>
+      </div>
+    </a>
   </main>
 
   <footer>Рекорды и твой топ хранятся в этом браузере</footer>
@@ -249,17 +276,21 @@
 (function(){
   'use strict';
   var GAMES = [
+    { id:'slots',         name:'СЛОТЫ',         c:'#ff4b8a', key:null,                 fmt:function(){ return null; } },
     { id:'pixel-surf',    name:'PIXEL SURF',    c:'#ff5b6e', key:'pixelsurf_best',     fmt:function(v){ return v>0 ? v+' очк.' : null; } },
     { id:'pole-position', name:'POLE POSITION', c:'#40a0ff', key:'pole_pos_bestlap',   fmt:function(v){ return v>0 ? 'круг '+Math.floor(v/60)+':'+String(Math.floor(v%60)).padStart(2,'0') : null; } },
     { id:'block-blast',   name:'БЛОК БЛАСТ',    c:'#4d9fff', key:'blockblast_best',    fmt:function(v){ return v>0 ? v+' очк.' : null; } },
     { id:'kosmo-raketa',  name:'КОСМО-РАКЕТА',  c:'#c7f04a', key:'kosmo_rocket_best',  fmt:function(v){ return v>0 ? v+' очк.' : null; } },
     { id:'blackjack',     name:'БЛЕКДЖЕК 21',   c:'#3cdc8c', key:null,                 fmt:function(){ return null; } },
+    { id:'chess',         name:'ШАХМАТЫ',       c:'#e0b070', key:null,                 fmt:function(){ return null; } },
+    { id:'billiard',      name:'БИЛЬЯРД',       c:'#4be0a8', key:null,                 fmt:function(){ return null; } },
     { id:'pixel-coffee',  name:'КОФЕЙНЯ',       c:'#ffa048', key:'pixcoffee_detailed', fmt:function(v){ return v!==0 ? '$'+v.toLocaleString('ru-RU') : null; } }
   ];
   // редакторский рейтинг «хиты»
-  var HITS = ['pixel-surf','block-blast','kosmo-raketa','pole-position','blackjack','pixel-coffee'];
-  var HIT_LABEL = { 'pixel-surf':'самый залипательный', 'block-blast':'«ещё одну партию»', 'kosmo-raketa':'для сильных нервов',
-                    'pole-position':'олдскул 80-х', 'blackjack':'без риска', 'pixel-coffee':'босс следит' };
+  var HITS = ['slots','pixel-surf','block-blast','kosmo-raketa','billiard','chess','pole-position','blackjack','pixel-coffee'];
+  var PINNED = 'slots';
+  var HIT_LABEL = { 'slots':'главный хит аркады', 'pixel-surf':'самый залипательный', 'block-blast':'«ещё одну партию»', 'kosmo-raketa':'для сильных нервов',
+                    'pole-position':'олдскул 80-х', 'blackjack':'без риска', 'chess':'мозг на максимум', 'billiard':'физика как в жизни', 'pixel-coffee':'босс следит' };
 
   function get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
   function set(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
@@ -274,7 +305,12 @@
   function ranking(){
     if(mode==='hits') return HITS.map(byId);
     var p = plays();
-    return HITS.map(byId).sort(function(a,b){ return (p[b.id]||0)-(p[a.id]||0); });
+    // слоты всегда закреплены на 1 месте, остальные по запускам
+    return HITS.map(byId).sort(function(a,b){
+      if(a.id===PINNED) return -1;
+      if(b.id===PINNED) return 1;
+      return (p[b.id]||0)-(p[a.id]||0);
+    });
   }
   function stat(g){
     if(mode==='hits') return HIT_LABEL[g.id];
